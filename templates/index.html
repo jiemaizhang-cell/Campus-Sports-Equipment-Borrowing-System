@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Campus Sports Equipment Borrowing — Card Input</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+  <main class="panel">
+    <div class="eyebrow">ASSIGNMENT 1 · ITERATION 1 · B1</div>
+    <h1>Campus Sports Equipment Borrowing System</h1>
+    <p class="intro">Enter a test student card ID to check its format.</p>
+    <form id="card-form" novalidate>
+      <label for="card-id">Student Card ID</label>
+      <input id="card-id" name="card_id" type="text" inputmode="numeric"
+             autocomplete="off" placeholder="e.g. 20260001"
+             aria-describedby="format-help" maxlength="64" />
+      <p id="format-help" class="helper">Demo format: exactly 8 digits. Leading and trailing spaces are ignored.</p>
+      <button id="submit-button" type="submit">Verify Card Format</button>
+    </form>
+    <div id="feedback" class="feedback" role="status" aria-live="polite" hidden></div>
+    <div class="note"><strong>Prototype limitation:</strong> This only validates card ID input format. It does not verify whether a student is registered, read a physical card, or create a loan.</div>
+  </main>
+  <script src="{{ url_for('static', filename='main.js') }}"></script>
+</body>
+</html>
