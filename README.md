@@ -1,6 +1,6 @@
 # Campus Sports Equipment Borrowing System
 
-Software Engineering Assignment 1 prototype. It verifies test cards, displays equipment availability and outstanding loans, and lets verified cards borrow available equipment. The prototype uses a local SQLite database and allows one outstanding loan per card.
+Software Engineering Assignment 1 prototype. It verifies test cards, displays equipment availability and outstanding loans, and lets verified cards borrow and return equipment. The prototype uses a local SQLite database and allows one outstanding loan per card.
 
 ## Requirements
 
@@ -27,6 +27,8 @@ python app.py
 Open `http://127.0.0.1:5000/` and select **Verify Test Card** after entering an ID. The first visit initializes `instance/campus.db` with demo data. Try `20260001` for a registered card, `20260099` for an unregistered card, and `ABC123` for a format error.
 
 In the demo data, `20260001` starts with no active loan and `20260002` starts with an active basketball loan. After verifying an eligible card, select an available item and click **Borrow Equipment**. A successful loan immediately updates the displayed stock and outstanding loan status.
+
+Select **Return Equipment** while the verified card shows an active loan. A successful return clears the displayed loan, restores one unit to stock, and lets the same card borrow again.
 
 The **Equipment availability** table reads current quantities from SQLite on every page load. New databases start with 5 basketballs, 3 footballs, and 0 badminton rackets. The table shows items with zero stock as **Unavailable**.
 
@@ -56,7 +58,7 @@ Record the actual output, execution date, environment, number of passed/failed t
 
 ## Limitations
 
-The prototype uses synthetic test card IDs and local demo data. Equipment return is tracked separately in B7.
+The prototype uses synthetic test card IDs and local demo data.
 
 ## Attribution
 
