@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Pickup Counter | Campus Sports Equipment Borrowing</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+  <header class="app-header">
+    <div class="header-inner">
+      <a class="brand-mark" href="{{ url_for('index') }}">Campus Sports Desk</a>
+      <nav class="top-nav" aria-label="System views">
+        <a class="top-nav-item" href="{{ url_for('index') }}">Borrowing</a>
+        <span class="top-nav-item is-current" aria-current="page">Pickup Counter</span>
+        <a class="top-nav-item" href="{{ url_for('staff') }}">Staff view</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="page-main">
+    <div class="page-intro">
+      <h1>Pickup Counter</h1>
+      <p class="intro">Hand out reserved equipment with a pickup code.</p>
+    </div>
+
+    {% if active_reservations is none %}
+    <section class="data-surface">
+      <p class="empty-note">Counter records are temporarily unavailable.</p>
+    </section>
+    {% else %}
+    <section class="desk-surface counter-bar" aria-label="Pickup code verification">
+      <form id="counter-claim-form" action="{{ url_for('claim_equipment_reservation') }}" method="post" novalidate>
+        <label for="counter-pickup-code">6-Character Pickup Code</label>
+        <div class="input-row">
+          <input id="counter-pickup-code" name="pickup_code" type="text"
+                 autocomplete="off" placeholder="Enter 6-char pickup code (e.g. K7M3P9)"
+                 maxlength="32" class="code-input" autofocus />
+          <button id="counter-claim-submit" type="submit">Verify &amp; Hand Out</button>
+        </div>
+        <p class="helper">Converts the held reservation into an active 2-hour loan for the student's registered card.</p>
+      </form>
+    </section>
+
+    <div id="counter-feedback" class="feedback toast-banner" role="status" aria-live="polite" aria-atomic="true" hidden></div>
+    {% endif %}
+  </main>
+
+  <script src="{{ url_for('static', filename='counter.js') }}"></script>
+</body>
+</html>

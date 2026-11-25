@@ -1,8 +1,15 @@
-"""SQLite storage for test cards, equipment availability, and loans."""
+"""SQLite storage for test cards, equipment availability, loans, and reservations."""
 
+import secrets
 import sqlite3
+from collections import Counter
 from contextlib import closing, contextmanager
 from pathlib import Path
+
+ALLOWED_RESERVATION_MINUTES = (5, 10, 15, 20)
+DEFAULT_RESERVATION_MINUTES = 10
+PICKUP_CODE_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
+PICKUP_CODE_LENGTH = 6
 
 
 class ActiveLoanExists(Exception):
@@ -25,6 +32,22 @@ class EquipmentUnavailable(Exception):
     """No units of the requested equipment are available."""
 
 
+class ActiveReservationExists(Exception):
+    """The card already has an active reservation."""
+
+
+class ReservationNotFound(Exception):
+    """The requested reservation or pickup code does not exist."""
+
+
+class ReservationStateError(Exception):
+    """The reservation is not in an active state."""
+
+
+class InvalidReservationDuration(Exception):
+    """The requested reservation hold duration is not allowed."""
+
+
 def record_loan(database, card_id, item_id):
     """Insert an active loan in the caller's transaction and return its ID."""
     loan = database.execute("""
@@ -37,15 +60,71 @@ def record_loan(database, card_id, item_id):
     return loan.lastrowid
 
 
+def _generate_pickup_code():
+    """Return a 6-character unambiguous uppercase pickup code."""
+    return "".join(secrets.choice(PICKUP_CODE_ALPHABET) for _ in range(PICKUP_CODE_LENGTH))
+
+
+def _expire_overdue_reservations(database):
+    """Mark overdue active reservations as expired and restore stock in the current write tx."""
+    overdue = database.execute("""
+        SELECT reservation_id, item_id
+        FROM reservations
+        WHERE status = 'active' AND expires_at <= CURRENT_TIMESTAMP
+    """).fetchall()
+    if not overdue:
+        return 0
+
+    reservation_ids = [row["reservation_id"] for row in overdue]
+    placeholders = ",".join("?" for _ in reservation_ids)
+    database.execute(f"""
+        UPDATE reservations
+        SET status = 'expired', resolved_at = CURRENT_TIMESTAMP
+        WHERE reservation_id IN ({placeholders}) AND status = 'active'
+    """, reservation_ids)
+
+    counts_by_item = Counter(row["item_id"] for row in overdue)
+    for item_id, count in counts_by_item.items():
+        database.execute(
+            "UPDATE equipment SET available_quantity = available_quantity + ? WHERE item_id = ?",
+            (count, item_id),
+        )
+    return len(overdue)
+
+
+def _expire_overdue_if_needed(database):
+    """Lazily expire overdue reservations only when at least one overdue active row exists."""
+    has_overdue = database.execute("""
+        SELECT 1 FROM reservations
+        WHERE status = 'active' AND expires_at <= CURRENT_TIMESTAMP
+        LIMIT 1
+    """).fetchone()
+    if has_overdue is None:
+        return
+    with database:
+        database.execute("BEGIN IMMEDIATE")
+        _expire_overdue_reservations(database)
+
+
 def borrow_equipment(database_path, card_id, item_id):
     """Create the loan and reduce available stock in one transaction."""
     with _open_database(database_path) as database, database:
         database.execute("BEGIN IMMEDIATE")
+        _expire_overdue_reservations(database)
+
         registered = database.execute(
             "SELECT 1 FROM registered_cards WHERE card_id = ?", (card_id,)
         ).fetchone()
         if registered is None:
             raise CardNotRegistered("This test card ID is not registered.")
+
+        active_reservation = database.execute(
+            "SELECT 1 FROM reservations WHERE card_id = ? AND status = 'active'", (card_id,)
+        ).fetchone()
+        if active_reservation is not None:
+            raise ActiveReservationExists(
+                "This card has an active reservation. Claim it with your pickup code or cancel it first."
+            )
 
         item = database.execute(
             "SELECT available_quantity FROM equipment WHERE item_id = ?", (item_id,)
@@ -87,6 +166,171 @@ def return_equipment(database_path, card_id, loan_id):
         return _read_loan_details(database, loan_id)
 
 
+def find_active_reservation(database_path, card_id):
+    """Return the active reservation for a registered card, or None."""
+    with _open_database(database_path) as database:
+        _expire_overdue_if_needed(database)
+        row = database.execute("""
+            SELECT reservations.reservation_id, reservations.card_id, reservations.item_id,
+                   equipment.name AS item_name, reservations.pickup_code, reservations.status,
+                   reservations.reserved_at, reservations.expires_at, reservations.resolved_at,
+                   equipment.available_quantity
+            FROM reservations
+            JOIN equipment ON equipment.item_id = reservations.item_id
+            WHERE reservations.card_id = ? AND reservations.status = 'active'
+            LIMIT 1
+        """, (card_id,)).fetchone()
+        return dict(row) if row is not None else None
+
+
+def create_reservation(database_path, card_id, item_id, duration_minutes=DEFAULT_RESERVATION_MINUTES):
+    """Reserve one unit of equipment with a unique pickup code and expiry timestamp."""
+    if type(duration_minutes) is not int or duration_minutes not in ALLOWED_RESERVATION_MINUTES:
+        raise InvalidReservationDuration("Reservation duration must be 5, 10, 15, or 20 minutes.")
+
+    with _open_database(database_path) as database, database:
+        database.execute("BEGIN IMMEDIATE")
+        _expire_overdue_reservations(database)
+
+        registered = database.execute(
+            "SELECT 1 FROM registered_cards WHERE card_id = ?", (card_id,)
+        ).fetchone()
+        if registered is None:
+            raise CardNotRegistered("This test card ID is not registered.")
+
+        active_loan = database.execute(
+            "SELECT 1 FROM loans WHERE card_id = ? AND returned_at IS NULL", (card_id,)
+        ).fetchone()
+        if active_loan is not None:
+            raise ActiveLoanExists("Return the current equipment before reserving another item.")
+
+        active_reservation = database.execute(
+            "SELECT 1 FROM reservations WHERE card_id = ? AND status = 'active'", (card_id,)
+        ).fetchone()
+        if active_reservation is not None:
+            raise ActiveReservationExists("This card already has an active reservation.")
+
+        item = database.execute(
+            "SELECT available_quantity FROM equipment WHERE item_id = ?", (item_id,)
+        ).fetchone()
+        if item is None:
+            raise EquipmentNotFound("This equipment item does not exist.")
+        if item[0] == 0:
+            raise EquipmentUnavailable("This item is out of stock.")
+
+        stock = database.execute("""
+            UPDATE equipment SET available_quantity = available_quantity - 1
+            WHERE item_id = ? AND available_quantity > 0
+        """, (item_id,))
+        if stock.rowcount != 1:
+            raise EquipmentUnavailable("This item is out of stock.")
+
+        duration_modifier = f"+{duration_minutes} minutes"
+        reservation_id = None
+        for _ in range(5):
+            pickup_code = _generate_pickup_code()
+            try:
+                cursor = database.execute("""
+                    INSERT INTO reservations (card_id, item_id, pickup_code, expires_at)
+                    VALUES (?, ?, ?, datetime('now', ?))
+                """, (card_id, item_id, pickup_code, duration_modifier))
+                reservation_id = cursor.lastrowid
+                break
+            except sqlite3.IntegrityError as error:
+                message = str(error)
+                if "pickup_code" in message:
+                    continue
+                raise ActiveReservationExists("This card already has an active reservation.") from error
+
+        if reservation_id is None:
+            raise sqlite3.IntegrityError("Unable to generate a unique pickup code.")
+
+        return _read_reservation_details(database, reservation_id)
+
+
+def claim_reservation(database_path, pickup_code):
+    """Convert an active reservation into an active loan by its pickup code."""
+    normalized_code = pickup_code.strip().upper()
+    with _open_database(database_path) as database, database:
+        database.execute("BEGIN IMMEDIATE")
+        _expire_overdue_reservations(database)
+
+        reservation = database.execute("""
+            SELECT reservation_id, card_id, item_id, status
+            FROM reservations
+            WHERE pickup_code = ?
+        """, (normalized_code,)).fetchone()
+        if reservation is None:
+            raise ReservationNotFound("Invalid pickup code.")
+
+        status = reservation["status"]
+        if status == "claimed":
+            raise ReservationStateError("This pickup code has already been used.")
+        if status == "expired":
+            raise ReservationStateError("This reservation has expired and the item was returned to stock.")
+        if status == "cancelled":
+            raise ReservationStateError("This reservation has been cancelled.")
+        if status != "active":
+            raise ReservationStateError("This reservation is no longer active.")
+
+        updated = database.execute("""
+            UPDATE reservations
+            SET status = 'claimed', resolved_at = CURRENT_TIMESTAMP
+            WHERE reservation_id = ? AND status = 'active'
+        """, (reservation["reservation_id"],))
+        if updated.rowcount != 1:
+            raise ReservationStateError("This reservation is no longer active.")
+
+        loan_id = record_loan(database, reservation["card_id"], reservation["item_id"])
+        return {
+            "loan": _read_loan_details(database, loan_id),
+            "reservation": _read_reservation_details(database, reservation["reservation_id"]),
+        }
+
+
+def cancel_reservation(database_path, card_id=None, reservation_id=None, pickup_code=None):
+    """Cancel an active reservation and restore its held unit to stock."""
+    with _open_database(database_path) as database, database:
+        database.execute("BEGIN IMMEDIATE")
+        _expire_overdue_reservations(database)
+
+        if pickup_code is not None:
+            normalized_code = pickup_code.strip().upper()
+            reservation = database.execute("""
+                SELECT reservation_id, item_id, status
+                FROM reservations
+                WHERE pickup_code = ?
+            """, (normalized_code,)).fetchone()
+        else:
+            reservation = database.execute("""
+                SELECT reservation_id, item_id, status
+                FROM reservations
+                WHERE reservation_id = ? AND card_id = ?
+            """, (reservation_id, card_id)).fetchone()
+
+        if reservation is None:
+            raise ReservationNotFound("Reservation not found.")
+
+        status = reservation["status"]
+        if status != "active":
+            raise ReservationStateError(f"This reservation is already {status} and cannot be cancelled.")
+
+        updated = database.execute("""
+            UPDATE reservations
+            SET status = 'cancelled', resolved_at = CURRENT_TIMESTAMP
+            WHERE reservation_id = ? AND status = 'active'
+        """, (reservation["reservation_id"],))
+        if updated.rowcount != 1:
+            raise ReservationStateError("This reservation is no longer active.")
+
+        database.execute("""
+            UPDATE equipment SET available_quantity = available_quantity + 1
+            WHERE item_id = ?
+        """, (reservation["item_id"],))
+
+        return _read_reservation_details(database, reservation["reservation_id"])
+
+
 def _read_loan_details(database, loan_id):
     return dict(database.execute("""
         SELECT loans.loan_id, loans.item_id, equipment.name AS item_name,
@@ -96,9 +340,22 @@ def _read_loan_details(database, loan_id):
     """, (loan_id,)).fetchone())
 
 
+def _read_reservation_details(database, reservation_id):
+    return dict(database.execute("""
+        SELECT reservations.reservation_id, reservations.card_id, reservations.item_id,
+               equipment.name AS item_name, reservations.pickup_code, reservations.status,
+               reservations.reserved_at, reservations.expires_at, reservations.resolved_at,
+               equipment.available_quantity
+        FROM reservations
+        JOIN equipment ON equipment.item_id = reservations.item_id
+        WHERE reservations.reservation_id = ?
+    """, (reservation_id,)).fetchone())
+
+
 def find_card_loan_status(database_path, card_id):
     """Find a registered card and any outstanding loan for it."""
     with _open_database(database_path) as database:
+        _expire_overdue_if_needed(database)
         return database.execute("""
             SELECT cards.card_id, loans.loan_id, loans.item_id, equipment.name AS item_name
             FROM registered_cards AS cards
@@ -113,12 +370,14 @@ def find_card_loan_status(database_path, card_id):
 def list_equipment(database_path):
     """Read the current available quantity for each item."""
     with _open_database(database_path) as database:
+        _expire_overdue_if_needed(database)
         return _read_equipment(database)
 
 
 def read_staff_overview(database_path):
     """Read equipment and loan history from the same SQLite snapshot."""
     with _open_database(database_path) as database, database:
+        _expire_overdue_if_needed(database)
         database.execute("BEGIN")
         equipment = _read_equipment(database)
         loans = database.execute("""
@@ -128,6 +387,38 @@ def read_staff_overview(database_path):
             ORDER BY loans.borrowed_at DESC, loans.loan_id DESC
         """).fetchall()
         return equipment, loans
+
+
+def read_staff_dashboard(database_path):
+    """Read equipment, loan history (with due/overdue), and reservations from one snapshot."""
+    with _open_database(database_path) as database, database:
+        _expire_overdue_if_needed(database)
+        database.execute("BEGIN")
+        equipment = _read_equipment(database)
+        loans = database.execute("""
+            SELECT loans.loan_id, loans.card_id, equipment.name AS item_name,
+                   loans.borrowed_at, loans.returned_at,
+                   datetime(loans.borrowed_at, '+2 hours') AS due_at,
+                   CASE
+                       WHEN loans.returned_at IS NULL
+                            AND datetime(loans.borrowed_at, '+2 hours') < CURRENT_TIMESTAMP
+                       THEN 1
+                       ELSE 0
+                   END AS is_overdue
+            FROM loans JOIN equipment ON equipment.item_id = loans.item_id
+            ORDER BY loans.borrowed_at DESC, loans.loan_id DESC
+        """).fetchall()
+        reservations = database.execute("""
+            SELECT reservations.reservation_id, reservations.card_id, reservations.item_id,
+                   equipment.name AS item_name, reservations.pickup_code, reservations.status,
+                   reservations.reserved_at, reservations.expires_at, reservations.resolved_at
+            FROM reservations
+            JOIN equipment ON equipment.item_id = reservations.item_id
+            ORDER BY CASE WHEN reservations.status = 'active' THEN 0 ELSE 1 END,
+                     reservations.reserved_at DESC,
+                     reservations.reservation_id DESC
+        """).fetchall()
+        return equipment, loans, reservations
 
 
 def _read_equipment(database):
@@ -142,6 +433,8 @@ def _open_database(database_path):
     path.parent.mkdir(parents=True, exist_ok=True)
     with closing(sqlite3.connect(path)) as database:
         database.row_factory = sqlite3.Row
+        database.execute("PRAGMA busy_timeout = 5000")
+        database.execute("PRAGMA journal_mode = WAL")
         database.execute("PRAGMA foreign_keys = ON")
         _initialize_database(database)
         yield database
@@ -156,7 +449,14 @@ def _schema_names(database):
 
 
 def _initialize_database(database):
-    required = {"registered_cards", "equipment", "loans", "unique_active_loan_per_card"}
+    required = {
+        "registered_cards",
+        "equipment",
+        "loans",
+        "unique_active_loan_per_card",
+        "reservations",
+        "unique_active_reservation_per_card",
+    }
     if required.issubset(_schema_names(database)):
         return
 
@@ -193,6 +493,13 @@ def _initialize_database(database):
                 CREATE UNIQUE INDEX unique_active_loan_per_card
                 ON loans (card_id) WHERE returned_at IS NULL
             """)
+        if "reservations" not in schema:
+            _create_reservations_table(database)
+        if "unique_active_reservation_per_card" not in schema:
+            database.execute("""
+                CREATE UNIQUE INDEX unique_active_reservation_per_card
+                ON reservations (card_id) WHERE status = 'active'
+            """)
         if new_loans_table:
             _seed_demo_loan(database)
 
@@ -205,6 +512,21 @@ def _create_loans_table(database):
             item_id INTEGER NOT NULL REFERENCES equipment (item_id),
             borrowed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             returned_at TEXT
+        )
+    """)
+
+
+def _create_reservations_table(database):
+    database.execute("""
+        CREATE TABLE reservations (
+            reservation_id INTEGER PRIMARY KEY,
+            card_id TEXT NOT NULL REFERENCES registered_cards (card_id),
+            item_id INTEGER NOT NULL REFERENCES equipment (item_id),
+            pickup_code TEXT NOT NULL UNIQUE,
+            status TEXT NOT NULL CHECK (status IN ('active', 'claimed', 'cancelled', 'expired')) DEFAULT 'active',
+            reserved_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            expires_at TEXT NOT NULL,
+            resolved_at TEXT
         )
     """)
 

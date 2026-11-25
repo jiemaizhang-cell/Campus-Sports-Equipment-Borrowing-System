@@ -7,43 +7,174 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
 </head>
 <body>
-  <main class="panel">
-    <nav class="view-links" aria-label="System views">
-      <a href="{{ url_for('staff') }}">Staff view</a>
-    </nav>
-    <h1>Campus Sports Equipment Borrowing System</h1>
-    <p class="intro">Verify a test student card to check loan status, borrow, or return equipment.</p>
-    <form id="card-form" action="{{ url_for('verify_card') }}" method="post" novalidate>
-      <label for="card-id">Student Card ID</label>
-      <input id="card-id" name="card_id" type="text" inputmode="numeric"
-             autocomplete="off" placeholder="e.g. 20260001"
-             aria-describedby="format-help" maxlength="64" />
-      <p id="format-help" class="helper">Demo format: exactly 8 digits. Leading and trailing spaces are ignored.</p>
-      <button id="submit-button" type="submit">Verify Test Card</button>
-    </form>
-    <div id="feedback" class="feedback" role="status" aria-live="polite" aria-atomic="true" hidden>
-      <div id="card-message"></div>
-      <div id="loan-status" class="loan-status" hidden></div>
+  <header class="app-header">
+    <div class="header-inner">
+      <a class="brand-mark" href="{{ url_for('index') }}">Campus Sports Desk</a>
+      <nav class="top-nav" aria-label="System views">
+        <span class="top-nav-item is-current" aria-current="page">Borrowing</span>
+        <a class="top-nav-item" href="{{ url_for('counter') }}">Pickup Counter</a>
+        <a class="top-nav-item" href="{{ url_for('staff') }}">Staff view</a>
+      </nav>
     </div>
-    <form id="return-form" action="{{ url_for('return_loan') }}" method="post" hidden>
-      <button id="return-button" type="submit">Return Equipment</button>
-    </form>
-    <div class="note">Demo cards: <strong>20260001</strong> starts with no loan and <strong>20260002</strong> starts with an active loan.</div>
-    <section class="equipment" aria-labelledby="equipment-heading">
-      <h2 id="equipment-heading">Equipment availability</h2>
-      {% include "_equipment_table.html" %}
-      <form id="borrow-form" action="{{ url_for('borrow') }}" method="post" hidden>
-        <label for="equipment-item">Equipment to borrow</label>
-        <select id="equipment-item" name="item_id" required>
-          <option value="">Choose an item</option>
-          {% for item in equipment or [] %}
-          <option id="borrow-option-{{ item.item_id }}" value="{{ item.item_id }}"{% if item.available_quantity == 0 %} disabled{% endif %}>{{ item.name }}</option>
-          {% endfor %}
-        </select>
-        <button id="borrow-button" type="submit" disabled>Borrow Equipment</button>
-      </form>
+  </header>
+
+  <main class="page-main">
+    <div class="page-intro">
+      <h1>Campus Sports Equipment Borrowing System</h1>
+      <p class="intro">Verify your student card to borrow on-site or reserve equipment for pickup. Returns are processed at the Pickup Counter.</p>
+    </div>
+
+    <section class="desk-surface" aria-label="Student borrowing desk">
+      <div id="verify-zone" class="verify-zone">
+        <div class="verify-grid">
+          <form id="card-form" class="verify-form-col" action="{{ url_for('verify_card') }}" method="post" novalidate>
+            <label for="card-id">Student Card ID</label>
+            <div class="input-row">
+              <input id="card-id" name="card_id" type="text" inputmode="numeric"
+                     autocomplete="off" placeholder="Enter 8-digit card ID (e.g. 20260001)"
+                     aria-describedby="format-help" maxlength="64" autofocus />
+              <button id="submit-button" type="submit">Verify Card</button>
+            </div>
+            <p id="format-help" class="helper demo-row">
+              Demo:
+              <button type="button" class="demo-link" data-card-id="20260001" title="Registered, no active loan">20260001 (Free)</button>
+              <span class="sep">·</span>
+              <button type="button" class="demo-link" data-card-id="20260002" title="Registered, active loan">20260002 (Loan)</button>
+              <span class="sep">·</span>
+              <button type="button" class="demo-link" data-card-id="20260099" title="Unregistered card">20260099 (None)</button>
+              <span class="sep">·</span>
+              <button type="button" class="demo-link" data-card-id="ABC123" title="Invalid format">ABC123 (Bad)</button>
+            </p>
+          </form>
+
+          <dl class="verify-rules-col" aria-label="Borrowing rules">
+            <div class="rule-row">
+              <dt>Limit</dt>
+              <dd>1 active item / card</dd>
+            </div>
+            <div class="rule-row">
+              <dt>Loan window</dt>
+              <dd>2 hours</dd>
+            </div>
+            <div class="rule-row">
+              <dt>Pickup hold</dt>
+              <dd>5 min (borrow) · 5–20 min (reserve)</dd>
+            </div>
+          </dl>
+        </div>
+      </div>
+
+      <div id="verified-strip" class="verified-strip" hidden>
+        <div class="verified-summary">
+          <span class="verified-label">Verified card</span>
+          <code id="verified-card-display" class="verified-id"></code>
+        </div>
+        <div class="verified-actions">
+          <button id="reopen-modal-btn" type="button" class="btn-text">Open actions</button>
+          <button id="switch-card-btn" type="button" class="btn-text" title="Switch to another card">Switch card</button>
+        </div>
+      </div>
+
+      <div id="feedback" class="feedback" role="status" aria-live="polite" aria-atomic="true" hidden>
+        <div id="card-message"></div>
+        <div id="loan-status" class="loan-status" hidden></div>
+      </div>
+    </section>
+
+    <dialog id="action-modal" class="action-modal" aria-labelledby="modal-title">
+      <div class="modal-header">
+        <div>
+          <h2 id="modal-title" class="modal-title">Card <code id="modal-card-id" class="modal-card-code"></code></h2>
+          <p id="modal-subtitle" class="modal-subtitle"></p>
+        </div>
+        <button id="modal-close-btn" type="button" class="modal-close" aria-label="Close dialog">&times;</button>
+      </div>
+
+      <div class="modal-body">
+        <div id="modal-feedback" class="feedback modal-feedback" role="status" aria-live="polite" aria-atomic="true" hidden></div>
+
+        <section id="reservation-card" class="reservation-ticket" aria-label="Active reservation" hidden>
+          <div class="ticket-main">
+            <div class="ticket-details">
+              <div class="ticket-state-row">
+                <span class="ticket-state">Reserved for pickup</span>
+                <span id="res-countdown" class="countdown-badge" hidden></span>
+              </div>
+              <h3 id="res-item-name" class="ticket-item"></h3>
+              <p class="ticket-expiry">Hold expires (UTC): <time id="res-expires-at"></time></p>
+            </div>
+            <div class="ticket-code-panel">
+              <span class="ticket-code-label">Pickup Code</span>
+              <div class="ticket-code-row">
+                <code id="res-pickup-code" class="pickup-code"></code>
+                <button id="copy-code-button" type="button" class="btn-ticket-copy">Copy</button>
+              </div>
+            </div>
+          </div>
+          <div class="ticket-actions">
+            <p class="ticket-guidance">Present this pickup code at the sports desk counter before it expires.</p>
+            <button id="res-cancel-button" type="button" class="btn-danger-outline">Cancel Reservation</button>
+          </div>
+        </section>
+
+        <section id="active-loan-notice" class="return-zone" aria-label="Active loan notice" hidden>
+          <h3 class="zone-title">Currently borrowed: <span id="active-loan-item"></span></h3>
+          <p class="helper">Return this item in person at the sports desk counter before borrowing or reserving another item.</p>
+        </section>
+
+        <div id="action-forms" hidden>
+          <form id="borrow-form" action="{{ url_for('create_equipment_reservation') }}" method="post" hidden>
+            <label for="equipment-item">Select equipment</label>
+            <select id="equipment-item" name="item_id" required>
+              <option value="">Choose an available item...</option>
+              {% for item in equipment or [] %}
+              <option id="borrow-option-{{ item.item_id }}" value="{{ item.item_id }}"{% if item.available_quantity == 0 %} disabled{% endif %}>{{ item.name }}</option>
+              {% endfor %}
+            </select>
+            <p id="selection-summary" class="selection-summary" hidden></p>
+            <button id="borrow-button" type="submit" disabled>Borrow Now (5m pickup)</button>
+          </form>
+
+          <div class="or-divider" aria-hidden="true"><span>or reserve for pickup</span></div>
+
+          <form id="reserve-form" class="reserve-dock" action="{{ url_for('create_equipment_reservation') }}" method="post" hidden>
+            <input id="reserve-duration" name="duration_minutes" type="hidden" value="10" />
+            <span class="hold-label">Hold</span>
+            <div class="duration-group" role="group" aria-label="Reservation hold duration">
+              <button type="button" class="duration-btn" data-duration="5">5m</button>
+              <button type="button" class="duration-btn is-active" data-duration="10">10m</button>
+              <button type="button" class="duration-btn" data-duration="15">15m</button>
+              <button type="button" class="duration-btn" data-duration="20">20m</button>
+            </div>
+            <button id="reserve-button" type="submit" class="btn-reserve" disabled>Reserve &amp; Get Code</button>
+          </form>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button id="modal-switch-btn" type="button" class="btn-modal-secondary">Switch Card</button>
+        <button id="modal-done-btn" type="button" class="btn-modal-close">Done</button>
+      </div>
+    </dialog>
+
+    <section id="inventory-surface" class="inventory-surface" aria-labelledby="equipment-heading">
+      <div class="section-head">
+        <div>
+          <h2 id="equipment-heading">Equipment availability</h2>
+          <p id="inventory-hint" class="inventory-subhint">Verify a card above to borrow or reserve.</p>
+        </div>
+        <div class="header-tools">
+          <button id="available-only-btn" type="button" class="filter-chip" aria-pressed="false">Available only</button>
+          <input id="equipment-search" type="search" class="search-input" placeholder="Search equipment..." aria-label="Search equipment" />
+        </div>
+      </div>
+      <div class="table-scroll" role="region" aria-labelledby="equipment-heading" tabindex="0">
+        {% include "_equipment_table.html" %}
+      </div>
+      <div id="equipment-pagination" class="pagination-bar" hidden></div>
     </section>
   </main>
+
   <script src="{{ url_for('static', filename='main.js') }}"></script>
 </body>
 </html>

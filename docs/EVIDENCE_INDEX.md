@@ -4,21 +4,17 @@ Repository: https://github.com/jiemaizhang-cell/Campus-Sports-Equipment-Borrowin
 
 | Required evidence | Direct link / artifact | Current verification |
 | --- | --- | --- |
-| Backlog | `docs/BACKLOG.md` (publish this file to repository) | Prepared locally; not yet published |
-| Tracked requirement | https://github.com/jiemaizhang-cell/Campus-Sports-Equipment-Borrowing-System/issues/1 | Existing GitHub Issue #1 |
-| Reviewed change | https://github.com/jiemaizhang-cell/Campus-Sports-Equipment-Borrowing-System/pull/2 | Merged PR; independent submitted review not verified |
-| Original feature commit | https://github.com/jiemaizhang-cell/Campus-Sports-Equipment-Borrowing-System/commit/53138c6 | B1 feature commit (short SHA) |
-| Automated test source | https://github.com/jiemaizhang-cell/Campus-Sports-Equipment-Borrowing-System/tree/main/tests | Test files are present; passing run not confirmed |
-| CI workflow | `.github/workflows/tests.yml` after publishing | Prepared locally; run not yet completed |
-| Test run results | **[ADD URL TO GITHUB ACTIONS RUN OR LOG]** | Pending actual execution |
-| Reviewer approval/comments | **[ADD ACTUAL REVIEW URL]** | Pending independent review |
-| Submission commit | **[ADD FULL MAIN SHA AFTER ALL UPLOADS]** | Pending final repository state |
+| Backlog | `docs/BACKLOG.md` | Updated through B1–B11 |
+| Tracked requirement (B1) | https://github.com/jiemaizhang-cell/Campus-Sports-Equipment-Borrowing-System/issues/1 | Existing GitHub Issue #1 |
+| Reviewed change (B1) | https://github.com/jiemaizhang-cell/Campus-Sports-Equipment-Borrowing-System/pull/2 | Merged PR |
+| Feature PRs (B4–B8) | PR #12–#16 on `main` | Merged to `main` |
+| Automated test source | `tests/test_api.py`, `tests/test_validation.py`, `tests/test_reservations.py` | Verified locally with `pytest` |
+| CI workflow | `.github/workflows/tests.yml` | Configured for `main`, `feature/**`, and PRs |
+| Cross-platform test runners | `run_tests.sh`, `run_tests_windows.ps1` | Saves timestamped logs and JUnit XML to `evidence/` |
 
 ## Acceptance trial mapping
 
-- TC1: valid 8-digit ID → format accepted
-- TC2: empty ID → rejected with clear feedback
-- TC3: malformed ID → rejected with clear feedback
-- TC4: repeated invalid submission → consistent rejection and no unexpected state change (only claim automated coverage if test exists)
-
-Record execution date, environment, pass/fail counts, and evidence URL before stating results in the report. Do not mistake expected test outcomes for observed outcomes.
+- TC1: valid 8-digit ID → format accepted and verified against SQLite
+- TC2: empty/malformed ID → rejected with clear feedback and no DB mutation
+- TC3: borrow & return → stock decrements/restores atomically; one active loan per card enforced
+- TC4: reservation & pickup code → 10/15/20 min hold locks 1 unit, generates 6-char code, claims cleanly into a loan, and restores stock on cancel or expiry
