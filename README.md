@@ -1,6 +1,6 @@
 # Campus Sports Equipment Borrowing System
 
-Software Engineering Assignment 1 prototype. B1 provides on-screen test card input and format validation. B2 verifies card IDs against synthetic registrations in a local SQLite database.
+Software Engineering Assignment 1 prototype. B1 provides on-screen test card input and format validation. B2 verifies card IDs against synthetic registrations, and B3 shows equipment availability from the same local SQLite database.
 
 ## Requirements
 
@@ -24,7 +24,9 @@ python -m pip install -r requirements.txt
 python app.py
 ```
 
-Open `http://127.0.0.1:5000/` and select **Verify Test Card** after entering an ID. The first verification of a format-valid ID initializes `instance/campus.db` with the registered demo card `20260001`. Try `20260099` for an unregistered card and `ABC123` for a format error.
+Open `http://127.0.0.1:5000/` and select **Verify Test Card** after entering an ID. The first visit initializes `instance/campus.db` with demo data. Try `20260001` for a registered card, `20260099` for an unregistered card, and `ABC123` for a format error.
+
+The **Equipment availability** table reads current quantities from SQLite on every page load. New databases start with 5 basketballs, 3 footballs, and 0 badminton rackets. The table shows items with zero stock as **Unavailable**.
 
 ## Tests
 

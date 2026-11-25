@@ -1,11 +1,11 @@
-"""Flask prototype for test card input and registration verification."""
+"""Flask prototype for test card verification and equipment availability."""
 
 import sqlite3
 from pathlib import Path
 
 from flask import Flask, jsonify, render_template, request
 
-from database import is_registered_card
+from database import is_registered_card, list_equipment
 from validation import validate_card_id
 
 app = Flask(__name__)
@@ -14,7 +14,13 @@ app.config["DATABASE"] = Path(app.instance_path) / "campus.db"
 
 @app.get("/")
 def index():
-    return render_template("index.html")
+    try:
+        equipment = list_equipment(app.config["DATABASE"])
+    except (OSError, sqlite3.Error):
+        app.logger.exception("Unable to read equipment availability")
+        equipment = None
+
+    return render_template("index.html", equipment=equipment), 200, {"Cache-Control": "no-store"}
 
 
 def _read_card_input():

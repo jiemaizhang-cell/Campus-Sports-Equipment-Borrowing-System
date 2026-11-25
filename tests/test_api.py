@@ -8,10 +8,18 @@ from unittest.mock import patch
 from app import app
 
 
-class CardAPIIntegrationTests(unittest.TestCase):
+class PrototypeAPITestCase(unittest.TestCase):
     def setUp(self):
+        directory = TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.database_path = Path(directory.name) / "instance" / "campus.db"
+        config = patch.dict(app.config, DATABASE=self.database_path)
+        config.start()
+        self.addCleanup(config.stop)
         self.client = app.test_client()
 
+
+class CardAPIIntegrationTests(PrototypeAPITestCase):
     def test_home_page(self):
         response = self.client.get("/")
         self.assertEqual(response.status_code, 200)
@@ -36,16 +44,7 @@ class CardAPIIntegrationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
 
 
-class CardVerificationTests(unittest.TestCase):
-    def setUp(self):
-        directory = TemporaryDirectory()
-        self.addCleanup(directory.cleanup)
-        self.database_path = Path(directory.name) / "instance" / "campus.db"
-        config = patch.dict(app.config, DATABASE=self.database_path)
-        config.start()
-        self.addCleanup(config.stop)
-        self.client = app.test_client()
-
+class CardVerificationTests(PrototypeAPITestCase):
     def test_home_page_uses_verification_endpoint(self):
         response = self.client.get("/")
         self.assertIn(b'action="/api/verify-card"', response.data)
@@ -89,6 +88,53 @@ class CardVerificationTests(unittest.TestCase):
         self.assertEqual(registered.status_code, 200)
         self.assertEqual(registered.get_json()["card_id"], "02026001")
         self.assertEqual(removed.status_code, 404)
+
+
+class EquipmentAvailabilityTests(PrototypeAPITestCase):
+    def test_home_displays_each_demo_item_with_its_quantity(self):
+        response = self.client.get("/")
+        self.assertEqual(response.status_code, 200)
+        html = response.get_data(as_text=True)
+
+        for name, quantity, state in (
+            ("Basketball", 5, "Available"),
+            ("Football", 3, "Available"),
+            ("Badminton racket", 0, "Unavailable"),
+        ):
+            with self.subTest(equipment=name):
+                self.assertRegex(
+                    html,
+                    rf'{name}</th>\s*<td>{quantity}</td>\s*'
+                    rf'<td class="stock-{state.lower()}">{state}</td>',
+                )
+
+    def test_home_reload_reflects_current_stock(self):
+        self.client.get("/")
+        with closing(sqlite3.connect(self.database_path)) as database, database:
+            database.execute(
+                "UPDATE equipment SET available_quantity = ? WHERE item_id = ?", (0, 1)
+            )
+            database.execute(
+                "UPDATE equipment SET available_quantity = ? WHERE item_id = ?", (4, 3)
+            )
+
+        response = self.client.get("/")
+        html = response.get_data(as_text=True)
+        self.assertIn("no-store", response.headers["Cache-Control"])
+        self.assertRegex(html, r'Basketball</th>\s*<td>0</td>\s*<td class="stock-unavailable">')
+        self.assertRegex(html, r'Badminton racket</th>\s*<td>4</td>\s*<td class="stock-available">')
+
+    def test_initializes_equipment_in_an_existing_card_database(self):
+        self.database_path.parent.mkdir()
+        with closing(sqlite3.connect(self.database_path)) as database, database:
+            database.execute("CREATE TABLE registered_cards (card_id TEXT NOT NULL PRIMARY KEY)")
+            database.execute("INSERT INTO registered_cards VALUES (?)", ("02026001",))
+
+        self.assertIn(b"Badminton racket", self.client.get("/").data)
+        registered = self.client.post("/api/verify-card", json={"card_id": "02026001"})
+        demo_card = self.client.post("/api/verify-card", json={"card_id": "20260001"})
+        self.assertEqual(registered.status_code, 200)
+        self.assertEqual(demo_card.status_code, 404)
 
 
 if __name__ == "__main__":
