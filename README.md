@@ -1,67 +1,99 @@
 # Campus Sports Equipment Borrowing System
 
-Software Engineering Assignment 1 prototype. It verifies test cards, displays equipment availability and outstanding loans, and lets verified cards borrow and return equipment. The prototype uses a local SQLite database and allows one outstanding loan per card.
+A Flask and SQLite prototype for the Software Engineering coursework. Students verify a test card, check available equipment, and borrow or return an item. The staff view shows current stock and loan history.
 
-## Requirements
+## Quick start
 
-- Python 3 and pip
-- Packages listed in `requirements.txt`
+Use Git and Python 3 with `pip` and `venv` available. The project has been tested with Python 3.12.
 
-## Setup
-
-```bash
+```sh
 git clone https://github.com/jiemaizhang-cell/Campus-Sports-Equipment-Borrowing-System.git
 cd Campus-Sports-Equipment-Borrowing-System
+```
+
+### Windows PowerShell
+
+```powershell
 python -m venv .venv
-# Windows: .venv\Scripts\activate
-# macOS/Linux: source .venv/bin/activate
-python -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe app.py
 ```
 
-## Run the prototype
+If `python` opens the Microsoft Store, use the full path to your installed `python.exe` for the virtual environment command.
 
-```bash
-python app.py
+### macOS or Linux
+
+```sh
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python app.py
 ```
 
-Open `http://127.0.0.1:5000/` and select **Verify Test Card** after entering an ID. The first visit initializes `instance/campus.db` with demo data. Try `20260001` for a registered card, `20260099` for an unregistered card, and `ABC123` for a format error.
+Open the [student page](http://127.0.0.1:5000/) while Flask is running. Select **Staff view** from the homepage or open [the staff page](http://127.0.0.1:5000/staff) directly. Press **Ctrl+C** in the server terminal to stop Flask.
 
-In the demo data, `20260001` starts with no active loan and `20260002` starts with an active basketball loan. After verifying an eligible card, select an available item and click **Borrow Equipment**. A successful loan immediately updates the displayed stock and outstanding loan status.
+## Demo workflow
 
-Select **Return Equipment** while the verified card shows an active loan. A successful return clears the displayed loan, restores one unit to stock, and lets the same card borrow again.
+On a fresh database, the available stock is five basketballs, three footballs, and zero badminton rackets. The homepage marks zero-stock items as **Unavailable**.
 
-The **Equipment availability** table reads current quantities from SQLite on every page load. New databases start with 5 basketballs, 3 footballs, and 0 badminton rackets. The table shows items with zero stock as **Unavailable**.
+| Test card input | Expected result on a fresh database |
+| --- | --- |
+| `20260001` | Registered card with no active loan |
+| `20260002` | Registered card with an active basketball loan |
+| `20260099` | Valid format with no registration |
+| `ABC123` | Format error |
 
-Open **Staff view** from the homepage or visit `http://127.0.0.1:5000/staff` to view current inventory and active and returned loans. Borrow and return times are shown in UTC. Select **Refresh staff view** after a borrow or return to see the latest records and quantities.
+1. Enter `20260001` and choose **Verify Test Card**.
+2. Select **Football** and click **Borrow Equipment**. On a fresh database, the football stock drops from three to two, and the student page shows an active loan.
+3. Open **Staff view** to see the active record. Click **Return Equipment** on the student page to restore the stock and clear the active loan.
+4. Select **Refresh staff view** to see the record marked **Returned**, along with the borrow time, return time, and restored stock. The staff page shows times in UTC.
 
-## Tests
+Each card can have one active loan. Borrowing and returning update the loan record and stock in a single SQLite transaction so they stay consistent if a write fails.
 
-If `pytest` is not installed, run `python -m pip install pytest`. Then execute:
+## Run tests
 
-```bash
-python -m pytest -v
+Run the suite from the repository root in a separate terminal. The tests use Python's built-in `unittest`, Flask's test client, and temporary SQLite databases.
+
+**Windows PowerShell**
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-Record the actual output, execution date, environment, number of passed/failed tests, and the tested commit SHA. Do not report a test pass until the command has been run.
+**macOS or Linux**
 
-## B1 traceability
+```sh
+.venv/bin/python -m unittest discover -s tests -v
+```
 
-- Requirement / issue: https://github.com/jiemaizhang-cell/Campus-Sports-Equipment-Borrowing-System/issues/1
-- Merged change: https://github.com/jiemaizhang-cell/Campus-Sports-Equipment-Borrowing-System/pull/2
-- Original feature commit: `53138c6`
-- Test files: `tests/test_api.py` and `tests/test_validation.py`
+The suite covers card validation, stock display, borrowing, returning, concurrent requests, transaction rollback, and staff records. For a focused concurrency check, add `-k test_concurrent_http_requests_for_one_card_commit_one_loan` to the test command. That case checks that two simultaneous requests for one card leave one active loan and deduct stock once.
 
-## Submission evidence (complete before marking)
+## Local data and project files
 
-- Final submission commit SHA: **[INSERT FULL SHA]**
-- Dated test execution log / CI URL: **[INSERT URL]**
-- Independent reviewer and review URL (if recorded): **[INSERT URL]**
-- Project backlog: report Section 3.1; publish a GitHub Project or linked issues for the full backlog if required.
+The first page load creates `instance/campus.db` with synthetic card registrations, equipment, and a sample loan. The database is ignored by Git and persists between runs. For demos, the app uses test card IDs and a read-only staff view.
 
-## Limitations
+| Path | Purpose |
+| --- | --- |
+| [`app.py`](app.py) | Flask entry point and routes |
+| [`database.py`](database.py) | SQLite schema, demo data, and loan transactions |
+| [`validation.py`](validation.py) | Test card ID format rules |
+| [`templates/`](templates/) and [`static/`](static/) | Student and staff pages, styling, and browser interactions |
+| [`tests/`](tests/) | Unit and integration tests |
 
-The prototype uses synthetic test card IDs and local demo data.
+## Requirements and pull requests
+
+| Feature | Issue | Pull request |
+| --- | --- | --- |
+| B1 Card input and format validation | [#1](https://github.com/jiemaizhang-cell/Campus-Sports-Equipment-Borrowing-System/issues/1) | [#2](https://github.com/jiemaizhang-cell/Campus-Sports-Equipment-Borrowing-System/pull/2) |
+| B2 Registered card verification | [#3](https://github.com/jiemaizhang-cell/Campus-Sports-Equipment-Borrowing-System/issues/3) | [#10](https://github.com/jiemaizhang-cell/Campus-Sports-Equipment-Borrowing-System/pull/10) |
+| B3 Equipment availability | [#4](https://github.com/jiemaizhang-cell/Campus-Sports-Equipment-Borrowing-System/issues/4) | [#11](https://github.com/jiemaizhang-cell/Campus-Sports-Equipment-Borrowing-System/pull/11) |
+| B4 Active loan detection | [#5](https://github.com/jiemaizhang-cell/Campus-Sports-Equipment-Borrowing-System/issues/5) | [#12](https://github.com/jiemaizhang-cell/Campus-Sports-Equipment-Borrowing-System/pull/12) |
+| B5 One active loan per card | [#6](https://github.com/jiemaizhang-cell/Campus-Sports-Equipment-Borrowing-System/issues/6) | [#13](https://github.com/jiemaizhang-cell/Campus-Sports-Equipment-Borrowing-System/pull/13) |
+| B6 Borrow equipment | [#7](https://github.com/jiemaizhang-cell/Campus-Sports-Equipment-Borrowing-System/issues/7) | [#14](https://github.com/jiemaizhang-cell/Campus-Sports-Equipment-Borrowing-System/pull/14) |
+| B7 Return equipment | [#8](https://github.com/jiemaizhang-cell/Campus-Sports-Equipment-Borrowing-System/issues/8) | [#15](https://github.com/jiemaizhang-cell/Campus-Sports-Equipment-Borrowing-System/pull/15) |
+| B8 Staff inventory and loan history | [#9](https://github.com/jiemaizhang-cell/Campus-Sports-Equipment-Borrowing-System/issues/9) | [#16](https://github.com/jiemaizhang-cell/Campus-Sports-Equipment-Borrowing-System/pull/16) |
+
+See the [original backlog](docs/BACKLOG.md) and [Assignment 1 evidence index](docs/EVIDENCE_INDEX.md) for planning and workflow records. For assessment, use the fixed commit or release listed in the submission.
 
 ## Attribution
 
-Record third-party libraries, reused code and any permitted AI assistance according to the assessment integrity requirements.
+The application uses Flask and Python's standard library. Codex assisted with implementation, tests, and documentation during development.
