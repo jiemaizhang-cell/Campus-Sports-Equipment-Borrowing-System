@@ -1,11 +1,19 @@
-"""Flask prototype for test cards, equipment, and active loans."""
+"""Flask prototype for verifying cards and borrowing equipment."""
 
 import sqlite3
 from pathlib import Path
 
 from flask import Flask, jsonify, render_template, request
 
-from database import find_card_loan_status, list_equipment
+from database import (
+    ActiveLoanExists,
+    CardNotRegistered,
+    EquipmentNotFound,
+    EquipmentUnavailable,
+    borrow_equipment,
+    find_card_loan_status,
+    list_equipment,
+)
 from validation import validate_card_id
 
 app = Flask(__name__)
@@ -61,6 +69,31 @@ def verify_card():
     return jsonify(
         valid=True, card_id=card["card_id"], message="Test card verified.", active_loan=active_loan
     ), 200
+
+
+@app.post("/api/borrow")
+def borrow():
+    valid, card_id, message = _read_card_input()
+    if not valid:
+        return jsonify(message=message), 400
+
+    item_id = request.get_json().get("item_id")
+    if isinstance(item_id, str) and len(item_id) <= 19 and item_id.isascii() and item_id.isdecimal():
+        item_id = int(item_id)
+    if type(item_id) is not int or not 0 < item_id < 2**63:
+        return jsonify(message="Select a valid equipment item."), 400
+
+    try:
+        loan = borrow_equipment(app.config["DATABASE"], card_id, item_id)
+    except (CardNotRegistered, EquipmentNotFound) as error:
+        return jsonify(message=str(error)), 404
+    except (ActiveLoanExists, EquipmentUnavailable) as error:
+        return jsonify(message=str(error)), 409
+    except (OSError, sqlite3.Error):
+        app.logger.exception("Unable to record an equipment loan")
+        return jsonify(message="Equipment borrowing is temporarily unavailable."), 503
+
+    return jsonify(loan=loan, message=f"Borrowed {loan['item_name']}."), 201
 
 
 if __name__ == "__main__":

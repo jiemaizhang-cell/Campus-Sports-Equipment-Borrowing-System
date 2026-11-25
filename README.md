@@ -1,6 +1,6 @@
 # Campus Sports Equipment Borrowing System
 
-Software Engineering Assignment 1 prototype. B1 provides on-screen test card input and format validation. B2 verifies card IDs against synthetic registrations, B3 shows equipment availability, and B4 shows outstanding equipment loans for verified cards. The prototype uses a local SQLite database.
+Software Engineering Assignment 1 prototype. It verifies test cards, displays equipment availability and outstanding loans, and lets verified cards borrow available equipment. The prototype uses a local SQLite database and allows one outstanding loan per card.
 
 ## Requirements
 
@@ -26,7 +26,7 @@ python app.py
 
 Open `http://127.0.0.1:5000/` and select **Verify Test Card** after entering an ID. The first visit initializes `instance/campus.db` with demo data. Try `20260001` for a registered card, `20260099` for an unregistered card, and `ABC123` for a format error.
 
-In the demo data, `20260001` has no active loan and `20260002` starts with an active basketball loan. Verify either card to see its current loan status.
+In the demo data, `20260001` starts with no active loan and `20260002` starts with an active basketball loan. After verifying an eligible card, select an available item and click **Borrow Equipment**. A successful loan immediately updates the displayed stock and outstanding loan status.
 
 The **Equipment availability** table reads current quantities from SQLite on every page load. New databases start with 5 basketballs, 3 footballs, and 0 badminton rackets. The table shows items with zero stock as **Unavailable**.
 
@@ -56,7 +56,7 @@ Record the actual output, execution date, environment, number of passed/failed t
 
 ## Limitations
 
-The on-screen test card ID is a demonstration input only. Current evidence does not establish campus-card hardware compatibility, live student-database integration, or completed borrowing/returning transactions.
+The prototype uses synthetic test card IDs and local demo data. Equipment return is tracked separately in B7.
 
 ## Attribution
 

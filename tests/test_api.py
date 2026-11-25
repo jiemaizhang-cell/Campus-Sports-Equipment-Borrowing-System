@@ -239,5 +239,106 @@ class ActiveLoanLimitTests(PrototypeAPITestCase):
             self.assertEqual(database.execute("SELECT * FROM loans").fetchall(), original_loans)
 
 
+class BorrowEquipmentTests(PrototypeAPITestCase):
+    def setUp(self):
+        super().setUp()
+        self.client.get("/")
+
+    def borrow(self, item_id, card_id="20260001"):
+        return self.client.post("/api/borrow", json={"card_id": card_id, "item_id": item_id})
+
+    def database_state(self):
+        with closing(sqlite3.connect(self.database_path)) as database:
+            stock = database.execute(
+                "SELECT item_id, available_quantity FROM equipment ORDER BY item_id"
+            ).fetchall()
+            loans = database.execute("SELECT * FROM loans ORDER BY loan_id").fetchall()
+        return stock, loans
+
+    def test_borrow_creates_a_timestamped_loan_and_decreases_stock(self):
+        _, original_loans = self.database_state()
+        response = self.borrow("2", " 20260001 ")
+        self.assertEqual(response.status_code, 201)
+        loan = response.get_json()["loan"]
+        self.assertEqual(loan["item_id"], 2)
+        self.assertEqual(loan["available_quantity"], 2)
+        self.assertRegex(loan["borrowed_at"], r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$")
+
+        stock, loans = self.database_state()
+        self.assertEqual(stock, [(1, 5), (2, 2), (3, 0)])
+        self.assertEqual(loans, original_loans + [
+            (loan["loan_id"], "20260001", 2, loan["borrowed_at"], None),
+        ])
+        verified = self.client.post("/api/verify-card", json={"card_id": "20260001"})
+        self.assertEqual(verified.get_json()["active_loan"], {"item_name": "Football", "status": "active"})
+
+    def test_rejects_out_of_stock_without_leaving_a_loan(self):
+        original = self.database_state()
+        response = self.borrow(3)
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.get_json()["message"], "This item is out of stock.")
+        self.assertEqual(self.database_state(), original)
+
+    def test_rejects_missing_or_invalid_card_and_equipment(self):
+        original = self.database_state()
+        for card_id, item_id, status in (
+            ("", 1, 400), ("20260099", 1, 404), ("20260001", 99, 404),
+            ("20260001", True, 400), ("20260001", 2**63, 400), ("20260001", None, 400),
+        ):
+            with self.subTest(card_id=card_id, item_id=item_id):
+                self.assertEqual(self.borrow(item_id, card_id).status_code, status)
+        self.assertEqual(self.database_state(), original)
+
+    def test_rejects_same_item_or_another_item_for_a_card_with_an_active_loan(self):
+        original = self.database_state()
+        for item_id in (1, 2):
+            with self.subTest(item_id=item_id):
+                response = self.borrow(item_id, "20260002")
+                self.assertEqual(response.status_code, 409)
+                self.assertEqual(
+                    response.get_json()["message"],
+                    "Return the current equipment before borrowing another item.",
+                )
+        self.assertEqual(self.database_state(), original)
+
+    def test_concurrent_http_requests_for_one_card_commit_one_loan(self):
+        original_stock, original_loans = self.database_state()
+        start = Barrier(2)
+
+        def attempt(item_id):
+            client = app.test_client()
+            start.wait(timeout=5)
+            return client.post("/api/borrow", json={"card_id": "20260001", "item_id": item_id})
+
+        with ThreadPoolExecutor(max_workers=2) as workers:
+            responses = list(workers.map(attempt, (1, 2)))
+
+        self.assertEqual(sorted(response.status_code for response in responses), [201, 409])
+        loan = next(response.get_json()["loan"] for response in responses if response.status_code == 201)
+        stock, loans = self.database_state()
+        self.assertEqual(stock, [
+            (item_id, available - (item_id == loan["item_id"])) for item_id, available in original_stock
+        ])
+        self.assertEqual(loans, original_loans + [
+            (loan["loan_id"], "20260001", loan["item_id"], loan["borrowed_at"], None),
+        ])
+
+    def test_rolls_back_if_either_database_write_fails(self):
+        original = self.database_state()
+        for event, table in (("INSERT", "loans"), ("UPDATE", "equipment")):
+            with self.subTest(table=table):
+                with closing(sqlite3.connect(self.database_path)) as database, database:
+                    database.execute(f"""
+                        CREATE TRIGGER fail_borrow BEFORE {event} ON {table}
+                        BEGIN SELECT RAISE(ABORT, 'test write failure'); END
+                    """)
+                with self.assertLogs(app.logger, level="ERROR"):
+                    response = self.borrow(1)
+                self.assertEqual(response.status_code, 503)
+                self.assertEqual(self.database_state(), original)
+                with closing(sqlite3.connect(self.database_path)) as database, database:
+                    database.execute("DROP TRIGGER fail_borrow")
+
+
 if __name__ == "__main__":
     unittest.main()

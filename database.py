@@ -9,6 +9,18 @@ class ActiveLoanExists(Exception):
     """The card already has an outstanding loan."""
 
 
+class CardNotRegistered(Exception):
+    """The test card does not exist."""
+
+
+class EquipmentNotFound(Exception):
+    """The requested equipment does not exist."""
+
+
+class EquipmentUnavailable(Exception):
+    """No units of the requested equipment are available."""
+
+
 def record_loan(database, card_id, item_id):
     """Insert an active loan in the caller's transaction and return its ID."""
     loan = database.execute("""
@@ -19,6 +31,46 @@ def record_loan(database, card_id, item_id):
     if loan.rowcount == 0:
         raise ActiveLoanExists("Return the current equipment before borrowing another item.")
     return loan.lastrowid
+
+
+def borrow_equipment(database_path, card_id, item_id):
+    """Create the loan and reduce available stock in one transaction."""
+    with _open_database(database_path) as database, database:
+        database.execute("BEGIN IMMEDIATE")
+        registered = database.execute(
+            "SELECT 1 FROM registered_cards WHERE card_id = ?", (card_id,)
+        ).fetchone()
+        if registered is None:
+            raise CardNotRegistered("This test card ID is not registered.")
+
+        item = database.execute(
+            "SELECT available_quantity FROM equipment WHERE item_id = ?", (item_id,)
+        ).fetchone()
+        if item is None:
+            raise EquipmentNotFound("This equipment item does not exist.")
+        if item[0] == 0:
+            raise EquipmentUnavailable("This item is out of stock.")
+
+        loan_id = record_loan(database, card_id, item_id)
+        stock = database.execute("""
+            UPDATE equipment SET available_quantity = available_quantity - 1
+            WHERE item_id = ? AND available_quantity > 0
+        """, (item_id,))
+        if stock.rowcount != 1:
+            raise EquipmentUnavailable("This item is out of stock.")
+
+        borrowed_at, item_name, available_quantity = database.execute("""
+            SELECT loans.borrowed_at, equipment.name, equipment.available_quantity
+            FROM loans JOIN equipment ON equipment.item_id = loans.item_id
+            WHERE loans.loan_id = ?
+        """, (loan_id,)).fetchone()
+        return {
+            "loan_id": loan_id,
+            "item_id": item_id,
+            "item_name": item_name,
+            "borrowed_at": borrowed_at,
+            "available_quantity": available_quantity,
+        }
 
 
 def find_card_loan_status(database_path, card_id):
@@ -41,7 +93,7 @@ def list_equipment(database_path):
     with _open_database(database_path) as database:
         database.row_factory = sqlite3.Row
         return database.execute(
-            "SELECT name, available_quantity FROM equipment ORDER BY item_id"
+            "SELECT item_id, name, available_quantity FROM equipment ORDER BY item_id"
         ).fetchall()
 
 
