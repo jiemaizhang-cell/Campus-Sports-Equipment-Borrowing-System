@@ -56,6 +56,7 @@ class CardVerificationTests(PrototypeAPITestCase):
             "valid": True,
             "card_id": "20260001",
             "message": "Test card verified.",
+            "active_loan": None,
         })
 
     def test_rejects_unregistered_card(self):
@@ -135,6 +136,36 @@ class EquipmentAvailabilityTests(PrototypeAPITestCase):
         demo_card = self.client.post("/api/verify-card", json={"card_id": "20260001"})
         self.assertEqual(registered.status_code, 200)
         self.assertEqual(demo_card.status_code, 404)
+
+
+class ActiveLoanTests(PrototypeAPITestCase):
+    def test_verified_card_with_an_active_loan_returns_the_item_and_status(self):
+        response = self.client.post("/api/verify-card", json={"card_id": "20260002"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["active_loan"], {
+            "item_name": "Basketball",
+            "status": "active",
+        })
+
+    def test_returned_loan_is_excluded_on_next_verification(self):
+        self.client.post("/api/verify-card", json={"card_id": "20260002"})
+        with closing(sqlite3.connect(self.database_path)) as database, database:
+            database.execute("UPDATE loans SET returned_at = CURRENT_TIMESTAMP WHERE card_id = ?", ("20260002",))
+
+        response = self.client.post("/api/verify-card", json={"card_id": "20260002"})
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.get_json()["active_loan"])
+
+    def test_migration_keeps_an_existing_demo_card_and_stock(self):
+        self.client.get("/")
+        with closing(sqlite3.connect(self.database_path)) as database, database:
+            database.execute("DROP TABLE loans")
+            database.execute("UPDATE equipment SET available_quantity = 2 WHERE item_id = 1")
+
+        response = self.client.post("/api/verify-card", json={"card_id": "20260002"})
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.get_json()["active_loan"])
+        self.assertRegex(self.client.get("/").get_data(as_text=True), r"Basketball</th>\s*<td>2</td>")
 
 
 if __name__ == "__main__":
