@@ -9,6 +9,10 @@ class ActiveLoanExists(Exception):
     """The card already has an outstanding loan."""
 
 
+class NoActiveLoan(Exception):
+    """The requested loan is no longer active for this card."""
+
+
 class CardNotRegistered(Exception):
     """The test card does not exist."""
 
@@ -59,26 +63,44 @@ def borrow_equipment(database_path, card_id, item_id):
         if stock.rowcount != 1:
             raise EquipmentUnavailable("This item is out of stock.")
 
-        borrowed_at, item_name, available_quantity = database.execute("""
-            SELECT loans.borrowed_at, equipment.name, equipment.available_quantity
-            FROM loans JOIN equipment ON equipment.item_id = loans.item_id
-            WHERE loans.loan_id = ?
-        """, (loan_id,)).fetchone()
-        return {
-            "loan_id": loan_id,
-            "item_id": item_id,
-            "item_name": item_name,
-            "borrowed_at": borrowed_at,
-            "available_quantity": available_quantity,
-        }
+        return _read_loan_details(database, loan_id)
+
+
+def return_equipment(database_path, card_id, loan_id):
+    """Close the requested active loan and restore its stock in one transaction."""
+    with _open_database(database_path) as database, database:
+        database.execute("BEGIN IMMEDIATE")
+        returned = database.execute("""
+            UPDATE loans SET returned_at = CURRENT_TIMESTAMP
+            WHERE loan_id = ? AND card_id = ? AND returned_at IS NULL
+        """, (loan_id, card_id))
+        if returned.rowcount != 1:
+            raise NoActiveLoan("This loan is no longer active for this card. Verify the card again.")
+
+        stock = database.execute("""
+            UPDATE equipment SET available_quantity = available_quantity + 1
+            WHERE item_id = (SELECT item_id FROM loans WHERE loan_id = ?)
+        """, (loan_id,))
+        if stock.rowcount != 1:
+            raise sqlite3.IntegrityError("Unable to restore stock for the returned loan.")
+
+        return _read_loan_details(database, loan_id)
+
+
+def _read_loan_details(database, loan_id):
+    return dict(database.execute("""
+        SELECT loans.loan_id, loans.item_id, equipment.name AS item_name,
+               loans.borrowed_at, loans.returned_at, equipment.available_quantity
+        FROM loans JOIN equipment ON equipment.item_id = loans.item_id
+        WHERE loans.loan_id = ?
+    """, (loan_id,)).fetchone())
 
 
 def find_card_loan_status(database_path, card_id):
     """Find a registered card and any outstanding loan for it."""
     with _open_database(database_path) as database:
-        database.row_factory = sqlite3.Row
         return database.execute("""
-            SELECT cards.card_id, equipment.name AS item_name
+            SELECT cards.card_id, loans.loan_id, loans.item_id, equipment.name AS item_name
             FROM registered_cards AS cards
             LEFT JOIN loans ON loans.card_id = cards.card_id AND loans.returned_at IS NULL
             LEFT JOIN equipment ON equipment.item_id = loans.item_id
@@ -91,7 +113,6 @@ def find_card_loan_status(database_path, card_id):
 def list_equipment(database_path):
     """Read the current available quantity for each item."""
     with _open_database(database_path) as database:
-        database.row_factory = sqlite3.Row
         return database.execute(
             "SELECT item_id, name, available_quantity FROM equipment ORDER BY item_id"
         ).fetchall()
@@ -102,6 +123,7 @@ def _open_database(database_path):
     path = Path(database_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with closing(sqlite3.connect(path)) as database:
+        database.row_factory = sqlite3.Row
         database.execute("PRAGMA foreign_keys = ON")
         _initialize_database(database)
         yield database
