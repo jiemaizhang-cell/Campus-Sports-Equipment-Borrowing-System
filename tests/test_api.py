@@ -1,11 +1,14 @@
 import sqlite3
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from threading import Barrier
 from unittest.mock import patch
 
 from app import app
+from database import ActiveLoanExists, record_loan
 
 
 class PrototypeAPITestCase(unittest.TestCase):
@@ -166,6 +169,74 @@ class ActiveLoanTests(PrototypeAPITestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIsNone(response.get_json()["active_loan"])
         self.assertRegex(self.client.get("/").get_data(as_text=True), r"Basketball</th>\s*<td>2</td>")
+
+
+class ActiveLoanLimitTests(PrototypeAPITestCase):
+    def setUp(self):
+        super().setUp()
+        self.client.get("/")
+
+    def test_duplicate_loan_rejection_rolls_back_inventory_changes(self):
+        with closing(sqlite3.connect(self.database_path)) as database:
+            stock_query = "SELECT item_id, available_quantity FROM equipment ORDER BY item_id"
+            original_stock = database.execute(stock_query).fetchall()
+            for item_id in (1, 2):
+                with self.subTest(item_id=item_id), self.assertRaises(ActiveLoanExists), database:
+                    database.execute("""
+                        UPDATE equipment SET available_quantity = available_quantity - 1
+                        WHERE item_id = ?
+                    """, (item_id,))
+                    record_loan(database, "20260002", item_id)
+
+            self.assertEqual(database.execute(stock_query).fetchall(), original_stock)
+            loans = database.execute("SELECT item_id FROM loans WHERE card_id = ?", ("20260002",))
+            self.assertEqual(loans.fetchall(), [(1,)])
+
+    def test_concurrent_loan_writes_leave_one_active_loan(self):
+        start = Barrier(2)
+
+        def attempt_loan(item_id):
+            with closing(sqlite3.connect(self.database_path)) as database:
+                start.wait(timeout=5)
+                try:
+                    with database:
+                        return record_loan(database, "20260001", item_id)
+                except ActiveLoanExists:
+                    return None
+
+        with ThreadPoolExecutor(max_workers=2) as workers:
+            results = list(workers.map(attempt_loan, (1, 2)))
+
+        successful_loans = [loan_id for loan_id in results if loan_id is not None]
+        self.assertEqual(len(successful_loans), 1)
+        with closing(sqlite3.connect(self.database_path)) as database:
+            active_loans = database.execute("""
+                SELECT loan_id FROM loans WHERE card_id = ? AND returned_at IS NULL
+            """, ("20260001",)).fetchall()
+            self.assertEqual(active_loans, [(successful_loans[0],)])
+
+    def test_a_returned_loan_allows_another_loan(self):
+        with closing(sqlite3.connect(self.database_path)) as database, database:
+            database.execute("""
+                UPDATE loans SET returned_at = CURRENT_TIMESTAMP WHERE card_id = ?
+            """, ("20260002",))
+            record_loan(database, "20260002", 2)
+            loans = database.execute("""
+                SELECT item_id, returned_at IS NULL FROM loans WHERE card_id = ? ORDER BY loan_id
+            """, ("20260002",))
+            self.assertEqual(loans.fetchall(), [(1, 0), (2, 1)])
+
+    def test_existing_database_gets_the_unique_index_without_changing_loans(self):
+        with closing(sqlite3.connect(self.database_path)) as database, database:
+            original_loans = database.execute("SELECT * FROM loans").fetchall()
+            database.execute("DROP INDEX unique_active_loan_per_card")
+
+        response = self.client.post("/api/verify-card", json={"card_id": "20260002"})
+        self.assertEqual(response.status_code, 200)
+        with closing(sqlite3.connect(self.database_path)) as database:
+            with self.assertRaises(sqlite3.IntegrityError), database:
+                database.execute("INSERT INTO loans (card_id, item_id) VALUES (?, ?)", ("20260002", 2))
+            self.assertEqual(database.execute("SELECT * FROM loans").fetchall(), original_loans)
 
 
 if __name__ == "__main__":

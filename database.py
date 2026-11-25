@@ -5,6 +5,22 @@ from contextlib import closing, contextmanager
 from pathlib import Path
 
 
+class ActiveLoanExists(Exception):
+    """The card already has an outstanding loan."""
+
+
+def record_loan(database, card_id, item_id):
+    """Insert an active loan in the caller's transaction and return its ID."""
+    loan = database.execute("""
+        INSERT INTO loans (card_id, item_id)
+        VALUES (?, ?)
+        ON CONFLICT (card_id) WHERE returned_at IS NULL DO NOTHING
+    """, (card_id, item_id))
+    if loan.rowcount == 0:
+        raise ActiveLoanExists("Return the current equipment before borrowing another item.")
+    return loan.lastrowid
+
+
 def find_card_loan_status(database_path, card_id):
     """Find a registered card and any outstanding loan for it."""
     with _open_database(database_path) as database:
@@ -39,26 +55,31 @@ def _open_database(database_path):
         yield database
 
 
-def _table_names(database):
-    return {name for (name,) in database.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+def _schema_names(database):
+    return {
+        name for (name,) in database.execute(
+            "SELECT name FROM sqlite_master WHERE type IN ('table', 'index')"
+        )
+    }
 
 
 def _initialize_database(database):
-    if {"registered_cards", "equipment", "loans"}.issubset(_table_names(database)):
+    required = {"registered_cards", "equipment", "loans", "unique_active_loan_per_card"}
+    if required.issubset(_schema_names(database)):
         return
 
-    # Create and seed missing tables together. Keep data from existing prototype databases.
+    # Apply schema changes and demo seeds together while preserving existing rows.
     with database:
         database.execute("BEGIN IMMEDIATE")
-        tables = _table_names(database)
-        if "registered_cards" not in tables:
+        schema = _schema_names(database)
+        if "registered_cards" not in schema:
             database.execute(
                 "CREATE TABLE registered_cards (card_id TEXT NOT NULL PRIMARY KEY)"
             )
             database.execute(
                 "INSERT INTO registered_cards (card_id) VALUES (?)", ("20260001",)
             )
-        if "equipment" not in tables:
+        if "equipment" not in schema:
             database.execute("""
                 CREATE TABLE equipment (
                     item_id INTEGER PRIMARY KEY,
@@ -72,8 +93,16 @@ def _initialize_database(database):
                 "INSERT INTO equipment (item_id, name, available_quantity) VALUES (?, ?, ?)",
                 [(1, "Basketball", 5), (2, "Football", 3), (3, "Badminton racket", 0)],
             )
-        if "loans" not in tables:
+        new_loans_table = "loans" not in schema
+        if new_loans_table:
             _create_loans_table(database)
+        if "unique_active_loan_per_card" not in schema:
+            database.execute("""
+                CREATE UNIQUE INDEX unique_active_loan_per_card
+                ON loans (card_id) WHERE returned_at IS NULL
+            """)
+        if new_loans_table:
+            _seed_demo_loan(database)
 
 
 def _create_loans_table(database):
@@ -87,6 +116,8 @@ def _create_loans_table(database):
         )
     """)
 
+
+def _seed_demo_loan(database):
     demo_item = database.execute(
         "SELECT item_id FROM equipment WHERE item_id = 1 AND name = 'Basketball'"
     ).fetchone()
@@ -100,6 +131,4 @@ def _create_loans_table(database):
         (demo_card_id,),
     )
     if inserted.rowcount == 1:
-        database.execute(
-            "INSERT INTO loans (card_id, item_id) VALUES (?, ?)", (demo_card_id, demo_item[0])
-        )
+        record_loan(database, demo_card_id, demo_item[0])
