@@ -12,6 +12,7 @@ button { margin-top:12px; border:0; width:100%; border-radius:9px; padding:14px 
 button:hover { background:#124773; }
 button:disabled { opacity:.65; cursor:wait; }
 .feedback { margin-top:20px; padding:13px 15px; border-radius:9px; font-weight:600; }
+.loan-status { margin-top:6px; font-weight:400; }
 .success { background:#e6f6eb; color:#166034; border:1px solid #a7dec0; }
 .error { background:#fff0ed; color:#9f2821; border:1px solid #f1c0b6; }
 .note { margin-top:28px; padding-top:19px; border-top:1px solid #e3eaf1; color:#667789; font-size:13px; line-height:1.65; }

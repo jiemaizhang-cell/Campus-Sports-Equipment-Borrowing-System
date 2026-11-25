@@ -1,11 +1,11 @@
-"""Flask prototype for test card verification and equipment availability."""
+"""Flask prototype for test cards, equipment, and active loans."""
 
 import sqlite3
 from pathlib import Path
 
 from flask import Flask, jsonify, render_template, request
 
-from database import is_registered_card, list_equipment
+from database import find_card_loan_status, list_equipment
 from validation import validate_card_id
 
 app = Flask(__name__)
@@ -46,15 +46,21 @@ def verify_card():
         return jsonify(valid=False, message=message), 400
 
     try:
-        registered = is_registered_card(app.config["DATABASE"], normalized)
+        card = find_card_loan_status(app.config["DATABASE"], normalized)
     except (OSError, sqlite3.Error):
         app.logger.exception("Unable to look up a registered test card")
         return jsonify(valid=False, message="Card verification is temporarily unavailable."), 503
 
-    if not registered:
+    if card is None:
         return jsonify(valid=False, message="This test card ID is not registered."), 404
 
-    return jsonify(valid=True, card_id=normalized, message="Test card verified."), 200
+    active_loan = None
+    if card["item_name"] is not None:
+        active_loan = {"item_name": card["item_name"], "status": "active"}
+
+    return jsonify(
+        valid=True, card_id=card["card_id"], message="Test card verified.", active_loan=active_loan
+    ), 200
 
 
 if __name__ == "__main__":
