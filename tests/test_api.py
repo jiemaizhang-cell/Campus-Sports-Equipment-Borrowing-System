@@ -1,3 +1,4 @@
+import re
 import sqlite3
 import unittest
 from concurrent.futures import ThreadPoolExecutor
@@ -432,6 +433,80 @@ class ReturnEquipmentTests(PrototypeAPITestCase):
                     response = self.return_loan(self.demo_loan_id)
                 self.assertEqual(response.status_code, 503)
                 self.assertEqual(self.database_state(), original)
+
+
+class StaffViewTests(PrototypeAPITestCase):
+    def row(self, html, row_id):
+        match = re.search(rf'<tr id="{row_id}">(.*?)</tr>', html, re.DOTALL)
+        self.assertIsNotNone(match, f"Missing staff table row {row_id}")
+        return match.group(1)
+
+    def test_staff_view_shows_current_inventory_and_an_existing_loan(self):
+        home = self.client.get("/")
+        self.assertIn(b'href="/staff">Staff view</a>', home.data)
+        response = self.client.get("/staff")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["Cache-Control"], "no-store")
+        html = response.get_data(as_text=True)
+
+        stock, loans = self.database_state()
+        for item_id, quantity in stock:
+            with self.subTest(item_id=item_id):
+                self.assertIn(f"<td>{quantity}</td>", self.row(html, f"equipment-{item_id}"))
+        loan_id, card_id, _, borrowed_at, _ = loans[0]
+        loan_row = self.row(html, f"loan-{loan_id}")
+        self.assertIn("Basketball</th>", loan_row)
+        self.assertIn(f"<td>{card_id}</td>", loan_row)
+        self.assertIn("<td>Active</td>", loan_row)
+        self.assertIn(f">{borrowed_at}</time>", loan_row)
+
+    def test_staff_view_reflects_successful_borrow_and_return(self):
+        card_id = "20260001"
+        borrow = self.client.post("/api/borrow", json={"card_id": card_id, "item_id": 2})
+        self.assertEqual(borrow.status_code, 201)
+        loan = borrow.get_json()["loan"]
+        row_id = f"loan-{loan['loan_id']}"
+        active_html = self.client.get("/staff").get_data(as_text=True)
+        active_row = self.row(active_html, row_id)
+        self.assertIn("Football</th>", active_row)
+        self.assertIn("<td>Active</td>", active_row)
+        self.assertIn(f">{loan['borrowed_at']}</time>", active_row)
+        self.assertIn("<td>2</td>", self.row(active_html, "equipment-2"))
+
+        rejected = self.client.post("/api/borrow", json={"card_id": card_id, "item_id": 1})
+        self.assertEqual(rejected.status_code, 409)
+        self.assertEqual(self.client.get("/staff").get_data(as_text=True), active_html)
+
+        returned = self.client.post("/api/return", json={"card_id": card_id, "loan_id": loan["loan_id"]})
+        self.assertEqual(returned.status_code, 200)
+        staff_html = self.client.get("/staff").get_data(as_text=True)
+        returned_row = self.row(staff_html, row_id)
+        self.assertIn("<td>Returned</td>", returned_row)
+        stock, loans = self.database_state()
+        current_loan = next(record for record in loans if record[0] == loan["loan_id"])
+        self.assertIn(f">{current_loan[3]}</time>", returned_row)
+        self.assertIn(f">{current_loan[4]}</time>", returned_row)
+        self.assertIn("<td>Active</td>", self.row(staff_html, "loan-1"))
+        self.assertIn(f"<td>{dict(stock)[2]}</td>", self.row(staff_html, "equipment-2"))
+        self.assertEqual(dict(stock)[2], 3)
+
+    def test_staff_view_handles_empty_loan_history(self):
+        self.client.get("/staff")
+        with closing(sqlite3.connect(self.database_path)) as database, database:
+            database.execute("DELETE FROM loans")
+
+        response = self.client.get("/staff")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"No loans recorded.", response.data)
+        self.assertIn(b"Basketball", response.data)
+
+    def test_staff_view_reports_unavailable_database(self):
+        self.database_path.mkdir(parents=True)
+        with self.assertLogs(app.logger, level="ERROR"):
+            response = self.client.get("/staff")
+        self.assertEqual(response.status_code, 503)
+        self.assertIn(b"Staff records are temporarily unavailable.", response.data)
+        self.assertNotIn(b"No loans recorded.", response.data)
 
 
 if __name__ == "__main__":

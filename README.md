@@ -32,6 +32,8 @@ Select **Return Equipment** while the verified card shows an active loan. A succ
 
 The **Equipment availability** table reads current quantities from SQLite on every page load. New databases start with 5 basketballs, 3 footballs, and 0 badminton rackets. The table shows items with zero stock as **Unavailable**.
 
+Open **Staff view** from the homepage or visit `http://127.0.0.1:5000/staff` to view current inventory and active and returned loans. Borrow and return times are shown in UTC. Select **Refresh staff view** after a borrow or return to see the latest records and quantities.
+
 ## Tests
 
 If `pytest` is not installed, run `python -m pip install pytest`. Then execute:

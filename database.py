@@ -113,9 +113,27 @@ def find_card_loan_status(database_path, card_id):
 def list_equipment(database_path):
     """Read the current available quantity for each item."""
     with _open_database(database_path) as database:
-        return database.execute(
-            "SELECT item_id, name, available_quantity FROM equipment ORDER BY item_id"
-        ).fetchall()
+        return _read_equipment(database)
+
+
+def read_staff_overview(database_path):
+    """Read equipment and loan history from the same SQLite snapshot."""
+    with _open_database(database_path) as database, database:
+        database.execute("BEGIN")
+        equipment = _read_equipment(database)
+        loans = database.execute("""
+            SELECT loans.loan_id, loans.card_id, equipment.name AS item_name,
+                   loans.borrowed_at, loans.returned_at
+            FROM loans JOIN equipment ON equipment.item_id = loans.item_id
+            ORDER BY loans.borrowed_at DESC, loans.loan_id DESC
+        """).fetchall()
+        return equipment, loans
+
+
+def _read_equipment(database):
+    return database.execute(
+        "SELECT item_id, name, available_quantity FROM equipment ORDER BY item_id"
+    ).fetchall()
 
 
 @contextmanager

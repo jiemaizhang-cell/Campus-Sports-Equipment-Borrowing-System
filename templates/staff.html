@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Staff view | Campus Sports Equipment Borrowing</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+  <main class="panel staff-panel">
+    <nav class="view-links" aria-label="System views">
+      <a href="{{ url_for('index') }}">Back to borrowing</a>
+      <a href="{{ url_for('staff') }}">Refresh staff view</a>
+    </nav>
+    <h1>Staff inventory and loan history</h1>
+    {% if loans is none %}
+    <p>Staff records are temporarily unavailable.</p>
+    {% else %}
+    <section class="equipment" aria-labelledby="equipment-heading">
+      <h2 id="equipment-heading">Equipment availability</h2>
+      {% include "_equipment_table.html" %}
+    </section>
+    <section class="loan-history" aria-labelledby="loan-history-heading">
+      <h2 id="loan-history-heading">Loan history</h2>
+      {% if loans %}
+      <div class="table-scroll" role="region" aria-labelledby="loan-history-heading" tabindex="0">
+        <table class="loan-table" aria-labelledby="loan-history-heading">
+          <thead>
+            <tr>
+              <th scope="col">Equipment</th>
+              <th scope="col">Test card ID</th>
+              <th scope="col">Status</th>
+              <th scope="col">Borrowed (UTC)</th>
+              <th scope="col">Returned (UTC)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for loan in loans %}
+            <tr id="loan-{{ loan.loan_id }}">
+              <th scope="row">{{ loan.item_name }}</th>
+              <td>{{ loan.card_id }}</td>
+              <td>{{ 'Active' if loan.returned_at is none else 'Returned' }}</td>
+              <td><time datetime="{{ loan.borrowed_at|replace(' ', 'T') }}Z">{{ loan.borrowed_at }}</time></td>
+              {% if loan.returned_at is none %}
+              <td>—</td>
+              {% else %}
+              <td><time datetime="{{ loan.returned_at|replace(' ', 'T') }}Z">{{ loan.returned_at }}</time></td>
+              {% endif %}
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <p>No loans recorded.</p>
+      {% endif %}
+    </section>
+    {% endif %}
+  </main>
+</body>
+</html>
