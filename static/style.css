@@ -2,7 +2,6 @@
 * { box-sizing:border-box; }
 body { margin:0; padding:44px 18px; }
 .panel { max-width:640px; margin:0 auto; background:white; padding:36px; border:1px solid #dce4ed; border-radius:16px; box-shadow:0 12px 38px rgba(22,45,75,.07); }
-.eyebrow { color:#23609d; font-size:12px; font-weight:750; letter-spacing:.13em; }
 h1 { font-size:27px; line-height:1.25; margin:16px 0 12px; }
 .intro { color:#4c6175; margin:0 0 30px; }
 label { display:block; font-weight:650; margin-bottom:9px; }

@@ -8,8 +8,8 @@ form.addEventListener('submit', async (event) => {
   button.disabled = true;
   feedback.hidden = true;
   try {
-    const response = await fetch('/api/validate-card', {
-      method: 'POST',
+    const response = await fetch(form.action, {
+      method: form.method,
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({card_id: input.value})
     });

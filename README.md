@@ -1,6 +1,6 @@
 # Campus Sports Equipment Borrowing System
 
-Software Engineering Assignment 1 prototype. The current B1 trial demonstrates **on-screen test card input** and card-ID format validation; this is not an integration with the university's physical card or identity system. Later backlog items (identity verification, stock management, borrowing and returning) should not be assumed complete.
+Software Engineering Assignment 1 prototype. B1 provides on-screen test card input and format validation. B2 verifies card IDs against synthetic registrations in a local SQLite database.
 
 ## Requirements
 
@@ -24,7 +24,7 @@ python -m pip install -r requirements.txt
 python app.py
 ```
 
-Open the local URL shown in the terminal. Depending on the Flask configuration, it may be `http://127.0.0.1:5000/`.
+Open `http://127.0.0.1:5000/` and select **Verify Test Card** after entering an ID. The first verification of a format-valid ID initializes `instance/campus.db` with the registered demo card `20260001`. Try `20260099` for an unregistered card and `ABC123` for a format error.
 
 ## Tests
 
