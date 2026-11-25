@@ -1,0 +1,28 @@
+{% if equipment is none %}
+<p>Equipment availability is temporarily unavailable.</p>
+{% elif equipment %}
+<table class="equipment-table" aria-labelledby="equipment-heading">
+  <thead>
+    <tr>
+      <th scope="col">Equipment</th>
+      <th scope="col">Available units</th>
+      <th scope="col">Status</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for item in equipment %}
+    <tr id="equipment-{{ item.item_id }}">
+      <th scope="row">{{ item.name }}</th>
+      <td>{{ item.available_quantity }}</td>
+      {% if item.available_quantity == 0 %}
+      <td class="stock-unavailable">Unavailable</td>
+      {% else %}
+      <td class="stock-available">Available</td>
+      {% endif %}
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p>No equipment is listed.</p>
+{% endif %}

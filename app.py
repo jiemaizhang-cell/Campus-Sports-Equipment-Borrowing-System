@@ -14,6 +14,7 @@ from database import (
     borrow_equipment,
     find_card_loan_status,
     list_equipment,
+    read_staff_overview,
     return_equipment,
 )
 from validation import validate_card_id
@@ -31,6 +32,18 @@ def index():
         equipment = None
 
     return render_template("index.html", equipment=equipment), 200, {"Cache-Control": "no-store"}
+
+
+@app.get("/staff")
+def staff():
+    headers = {"Cache-Control": "no-store"}
+    try:
+        equipment, loans = read_staff_overview(app.config["DATABASE"])
+    except (OSError, sqlite3.Error):
+        app.logger.exception("Unable to read staff records")
+        return render_template("staff.html", loans=None), 503, headers
+
+    return render_template("staff.html", equipment=equipment, loans=loans), 200, headers
 
 
 def _read_card_input():
