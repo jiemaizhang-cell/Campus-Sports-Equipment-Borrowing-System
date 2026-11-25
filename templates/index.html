@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Campus Sports Equipment Borrowing — Card Verification</title>
+  <title>Campus Sports Equipment Borrowing System</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
 </head>
 <body>
@@ -20,6 +20,37 @@
     </form>
     <div id="feedback" class="feedback" role="status" aria-live="polite" hidden></div>
     <div class="note">Try <strong>20260001</strong>, a registered demo card.</div>
+    <section class="equipment" aria-labelledby="equipment-heading">
+      <h2 id="equipment-heading">Equipment availability</h2>
+      {% if equipment is none %}
+      <p>Equipment availability is temporarily unavailable.</p>
+      {% elif equipment %}
+      <table class="equipment-table" aria-labelledby="equipment-heading">
+        <thead>
+          <tr>
+            <th scope="col">Equipment</th>
+            <th scope="col">Available units</th>
+            <th scope="col">Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in equipment %}
+          <tr>
+            <th scope="row">{{ item.name }}</th>
+            <td>{{ item.available_quantity }}</td>
+            {% if item.available_quantity == 0 %}
+            <td class="stock-unavailable">Unavailable</td>
+            {% else %}
+            <td class="stock-available">Available</td>
+            {% endif %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <p>No equipment is listed.</p>
+      {% endif %}
+    </section>
   </main>
   <script src="{{ url_for('static', filename='main.js') }}"></script>
 </body>
