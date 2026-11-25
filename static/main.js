@@ -3,41 +3,106 @@ const input = document.getElementById('card-id');
 const feedback = document.getElementById('feedback');
 const cardMessage = document.getElementById('card-message');
 const loanStatus = document.getElementById('loan-status');
-const button = document.getElementById('submit-button');
+const verifyButton = document.getElementById('submit-button');
+const borrowForm = document.getElementById('borrow-form');
+const itemSelect = document.getElementById('equipment-item');
+const borrowButton = document.getElementById('borrow-button');
+let verifiedCardId = null;
 
-input.addEventListener('input', () => {
+function clearVerification() {
+  verifiedCardId = null;
+  borrowForm.hidden = true;
+  itemSelect.value = '';
+  borrowButton.disabled = true;
   feedback.hidden = true;
+}
+
+function setSubmitting(submitting) {
+  verifyButton.disabled = submitting;
+  input.readOnly = submitting;
+  itemSelect.disabled = submitting;
+  borrowButton.disabled = submitting || !itemSelect.value;
+}
+
+function showFeedback(message, success, activeLoan = null) {
+  feedback.className = `feedback ${success ? 'success' : 'error'}`;
+  cardMessage.textContent = message;
+  loanStatus.hidden = !success;
+  if (success) {
+    loanStatus.textContent = activeLoan
+      ? `Active loan: ${activeLoan.item_name}.`
+      : 'No equipment is currently borrowed.';
+  }
+  feedback.hidden = false;
+}
+
+async function postForm(formToSubmit, payload) {
+  const response = await fetch(formToSubmit.action, {
+    method: formToSubmit.method,
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload)
+  });
+  return {response, data: await response.json()};
+}
+
+function updateStock(option, availableQuantity) {
+  const row = document.getElementById(`equipment-${option.value}`);
+  const inStock = availableQuantity > 0;
+  row.cells[1].textContent = availableQuantity;
+  row.cells[2].textContent = inStock ? 'Available' : 'Unavailable';
+  row.cells[2].className = inStock ? 'stock-available' : 'stock-unavailable';
+  option.disabled = !inStock;
+}
+
+input.addEventListener('input', clearVerification);
+itemSelect.addEventListener('change', () => {
+  borrowButton.disabled = !itemSelect.value;
 });
 
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
-  button.disabled = true;
-  input.readOnly = true;
-  feedback.hidden = true;
-  loanStatus.hidden = true;
+  clearVerification();
+  setSubmitting(true);
   try {
-    const response = await fetch(form.action, {
-      method: form.method,
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({card_id: input.value})
-    });
-    const data = await response.json();
+    const {response, data} = await postForm(form, {card_id: input.value});
     const verified = response.ok && data.valid;
-    feedback.className = `feedback ${verified ? 'success' : 'error'}`;
-    cardMessage.textContent = data.message || 'Unable to validate the card ID.';
-    if (verified) {
-      loanStatus.textContent = data.active_loan
-        ? `Active loan: ${data.active_loan.item_name}.`
-        : 'No equipment is currently borrowed.';
-      loanStatus.hidden = false;
+    showFeedback(data.message || 'Unable to validate the card ID.', verified, data.active_loan);
+    if (verified && !data.active_loan && itemSelect.options.length > 1) {
+      verifiedCardId = data.card_id;
+      borrowForm.hidden = false;
     }
-    feedback.hidden = false;
   } catch (error) {
-    feedback.className = 'feedback error';
-    cardMessage.textContent = 'Connection error. Please check that the Flask server is running.';
-    feedback.hidden = false;
+    showFeedback('Connection error. Please check that the Flask server is running.', false);
   } finally {
-    input.readOnly = false;
-    button.disabled = false;
+    setSubmitting(false);
+  }
+});
+
+borrowForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!verifiedCardId || !itemSelect.value) {
+    return;
+  }
+
+  const option = itemSelect.selectedOptions[0];
+  setSubmitting(true);
+  try {
+    const {response, data} = await postForm(borrowForm, {
+      card_id: verifiedCardId,
+      item_id: option.value
+    });
+    if (!response.ok) {
+      showFeedback(data.message || 'Unable to borrow this item.', false);
+      return;
+    }
+
+    updateStock(option, data.loan.available_quantity);
+    clearVerification();
+    showFeedback(data.message, true, data.loan);
+  } catch (error) {
+    clearVerification();
+    showFeedback('Could not confirm the loan. Verify the card again to check its status.', false);
+  } finally {
+    setSubmitting(false);
   }
 });

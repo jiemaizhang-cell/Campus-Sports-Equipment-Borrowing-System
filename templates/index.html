@@ -9,7 +9,7 @@
 <body>
   <main class="panel">
     <h1>Campus Sports Equipment Borrowing System</h1>
-    <p class="intro">Verify a test student card to see whether any equipment is currently borrowed.</p>
+    <p class="intro">Verify a test student card to check loan status and borrow available equipment.</p>
     <form id="card-form" action="{{ url_for('verify_card') }}" method="post" novalidate>
       <label for="card-id">Student Card ID</label>
       <input id="card-id" name="card_id" type="text" inputmode="numeric"
@@ -22,7 +22,7 @@
       <div id="card-message"></div>
       <div id="loan-status" class="loan-status" hidden></div>
     </div>
-    <div class="note">Demo cards: <strong>20260001</strong> has no loan and <strong>20260002</strong> starts with an active loan.</div>
+    <div class="note">Demo cards: <strong>20260001</strong> starts with no loan and <strong>20260002</strong> starts with an active loan.</div>
     <section class="equipment" aria-labelledby="equipment-heading">
       <h2 id="equipment-heading">Equipment availability</h2>
       {% if equipment is none %}
@@ -38,7 +38,7 @@
         </thead>
         <tbody>
           {% for item in equipment %}
-          <tr>
+          <tr id="equipment-{{ item.item_id }}">
             <th scope="row">{{ item.name }}</th>
             <td>{{ item.available_quantity }}</td>
             {% if item.available_quantity == 0 %}
@@ -53,6 +53,16 @@
       {% else %}
       <p>No equipment is listed.</p>
       {% endif %}
+      <form id="borrow-form" action="{{ url_for('borrow') }}" method="post" hidden>
+        <label for="equipment-item">Equipment to borrow</label>
+        <select id="equipment-item" name="item_id" required>
+          <option value="">Choose an item</option>
+          {% for item in equipment or [] %}
+          <option value="{{ item.item_id }}"{% if item.available_quantity == 0 %} disabled{% endif %}>{{ item.name }}</option>
+          {% endfor %}
+        </select>
+        <button id="borrow-button" type="submit" disabled>Borrow Equipment</button>
+      </form>
     </section>
   </main>
   <script src="{{ url_for('static', filename='main.js') }}"></script>
