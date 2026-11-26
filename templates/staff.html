@@ -7,31 +7,145 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
 </head>
 <body>
-  <main class="panel staff-panel">
-    <nav class="view-links" aria-label="System views">
-      <a href="{{ url_for('index') }}">Back to borrowing</a>
-      <a href="{{ url_for('staff') }}">Refresh staff view</a>
-    </nav>
-    <h1>Staff inventory and loan history</h1>
+  <header class="app-header">
+    <div class="header-inner">
+      <a class="brand-mark" href="{{ url_for('index') }}">Campus Sports Desk</a>
+      <nav class="top-nav" aria-label="System views">
+        <a class="top-nav-item" href="{{ url_for('index') }}">Back to borrowing</a>
+        <a class="top-nav-item" href="{{ url_for('counter') }}">Pickup Counter</a>
+        <a class="top-nav-item is-current" href="{{ url_for('staff') }}">Refresh staff view</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="page-main">
+    <div class="page-intro">
+      <h1>Staff inventory and loan history</h1>
+      <p class="intro">Monitor live equipment stock, audit reservation history, and track active or overdue loans.</p>
+    </div>
+
     {% if loans is none %}
-    <p>Staff records are temporarily unavailable.</p>
-    {% else %}
-    <section class="equipment" aria-labelledby="equipment-heading">
-      <h2 id="equipment-heading">Equipment availability</h2>
-      {% include "_equipment_table.html" %}
+    <section class="data-surface">
+      <p class="empty-note">Staff records are temporarily unavailable.</p>
     </section>
-    <section class="loan-history" aria-labelledby="loan-history-heading">
-      <h2 id="loan-history-heading">Loan history</h2>
+    {% else %}
+    {% set total_available = (equipment | sum(attribute='available_quantity')) if equipment else 0 %}
+    {% set active_loans = loans | selectattr('returned_at', 'none') | list | length %}
+    {% set overdue_loans = loans | selectattr('is_overdue', 'equalto', 1) | list | length %}
+    {% set active_reservations = (reservations | selectattr('status', 'equalto', 'active') | list | length) if reservations else 0 %}
+
+    <section class="summary-strip" aria-label="Operational summary">
+      <button type="button" class="summary-metric" data-summary-modal="available">
+        <span class="metric-top"><span class="metric-label">Available Units</span><span class="metric-action">View</span></span>
+        <strong class="metric-value">{{ total_available }}</strong>
+      </button>
+      <button type="button" class="summary-metric" data-summary-modal="active_loans">
+        <span class="metric-top"><span class="metric-label">Active Loans</span><span class="metric-action">View</span></span>
+        <strong class="metric-value">{{ active_loans }}</strong>
+      </button>
+      <button type="button" class="summary-metric" data-summary-modal="active_reservations">
+        <span class="metric-top"><span class="metric-label">Active Reservations</span><span class="metric-action">View</span></span>
+        <strong class="metric-value">{{ active_reservations }}</strong>
+      </button>
+      <button type="button" class="summary-metric {% if overdue_loans > 0 %}is-alert{% endif %}" data-summary-modal="overdue_loans">
+        <span class="metric-top"><span class="metric-label">Overdue Loans</span><span class="metric-action">View</span></span>
+        <strong class="metric-value">{{ overdue_loans }}</strong>
+      </button>
+    </section>
+
+    <div id="staff-action-feedback" class="feedback toast-banner" role="status" aria-live="polite" hidden></div>
+
+    <div class="split-layout staff-top-grid">
+      <section class="data-surface" aria-labelledby="equipment-heading">
+        <div class="section-head">
+          <h2 id="equipment-heading">Equipment availability</h2>
+        </div>
+        <div class="table-scroll" role="region" aria-labelledby="equipment-heading" tabindex="0">
+          {% include "_equipment_table.html" %}
+        </div>
+        <div id="staff-equipment-pagination" class="pagination-bar" hidden></div>
+      </section>
+
+      <section class="data-surface" aria-labelledby="reservations-heading">
+        <div class="section-head">
+          <h2 id="reservations-heading">Reservations</h2>
+          <div class="filter-bar" role="group" aria-label="Filter reservations">
+            <button type="button" class="filter-chip is-active" data-res-filter="all">All</button>
+            <button type="button" class="filter-chip" data-res-filter="active">Active</button>
+            <button type="button" class="filter-chip" data-res-filter="claimed">Claimed</button>
+            <button type="button" class="filter-chip" data-res-filter="cancelled">Cancelled</button>
+            <button type="button" class="filter-chip" data-res-filter="expired">Expired</button>
+          </div>
+        </div>
+        {% if reservations %}
+        <div class="table-scroll" role="region" aria-labelledby="reservations-heading" tabindex="0">
+          <table class="loan-table compact-table" id="reservations-table" aria-labelledby="reservations-heading">
+            <thead>
+              <tr>
+                <th scope="col">Code</th>
+                <th scope="col">Equipment</th>
+                <th scope="col">Card ID</th>
+                <th scope="col">Status</th>
+                <th scope="col">Expires (UTC)</th>
+                <th scope="col">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for res in reservations %}
+              <tr id="reservation-{{ res.reservation_id }}" data-status="{{ res.status }}">
+                <td><code class="table-code">{{ res.pickup_code }}</code></td>
+                <th scope="row">{{ res.item_name }}</th>
+                <td>{{ res.card_id }}</td>
+                <td class="status-cell"><span class="status-pill status-{{ res.status }}">{{ res.status | capitalize }}</span></td>
+                <td><time datetime="{{ res.expires_at|replace(' ', 'T') }}Z">{{ res.expires_at }}</time></td>
+                <td class="action-cell">
+                  {% if res.status == 'active' %}
+                  <div class="action-stack">
+                    <button type="button" class="btn-table-primary staff-row-claim" data-pickup-code="{{ res.pickup_code }}">Claim</button>
+                    <button type="button" class="btn-table-danger staff-row-cancel" data-pickup-code="{{ res.pickup_code }}">Cancel</button>
+                  </div>
+                  {% else %}
+                  —
+                  {% endif %}
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <div id="staff-reservations-pagination" class="pagination-bar" hidden></div>
+        {% else %}
+        <div class="empty-panel">
+          <p class="empty-note">No reservations recorded.</p>
+        </div>
+        {% endif %}
+      </section>
+    </div>
+
+    <section class="data-surface" aria-labelledby="loan-history-heading">
+      <div class="section-head">
+        <h2 id="loan-history-heading">Loan history</h2>
+        <div class="history-controls">
+          <div class="filter-bar" role="group" aria-label="Filter loans">
+            <button type="button" class="filter-chip is-active" data-loan-filter="all">All</button>
+            <button type="button" class="filter-chip" data-loan-filter="active">Active</button>
+            <button type="button" class="filter-chip" data-loan-filter="returned">Returned</button>
+          </div>
+          <input id="loan-search" type="search" class="search-input" placeholder="Search card or item..." aria-label="Search loans" />
+        </div>
+      </div>
       {% if loans %}
       <div class="table-scroll" role="region" aria-labelledby="loan-history-heading" tabindex="0">
-        <table class="loan-table" aria-labelledby="loan-history-heading">
+        <table class="loan-table" id="loan-history-table" aria-labelledby="loan-history-heading">
           <thead>
             <tr>
               <th scope="col">Equipment</th>
               <th scope="col">Test card ID</th>
               <th scope="col">Status</th>
               <th scope="col">Borrowed (UTC)</th>
+              <th scope="col">Due (UTC)</th>
               <th scope="col">Returned (UTC)</th>
+              <th scope="col">Action</th>
             </tr>
           </thead>
           <tbody>
@@ -41,21 +155,45 @@
               <td>{{ loan.card_id }}</td>
               <td>{{ 'Active' if loan.returned_at is none else 'Returned' }}</td>
               <td><time datetime="{{ loan.borrowed_at|replace(' ', 'T') }}Z">{{ loan.borrowed_at }}</time></td>
+              <td class="{% if loan.is_overdue %}cell-overdue{% endif %}"><time datetime="{{ loan.due_at|replace(' ', 'T') }}Z">{{ loan.due_at }}</time></td>
               {% if loan.returned_at is none %}
               <td>—</td>
+              <td class="action-cell">
+                <button type="button" class="btn-table-primary staff-row-return"
+                        data-card-id="{{ loan.card_id }}"
+                        data-loan-id="{{ loan.loan_id }}">Return</button>
+              </td>
               {% else %}
               <td><time datetime="{{ loan.returned_at|replace(' ', 'T') }}Z">{{ loan.returned_at }}</time></td>
+              <td class="action-cell">—</td>
               {% endif %}
             </tr>
             {% endfor %}
           </tbody>
         </table>
       </div>
+      <div id="staff-loans-pagination" class="pagination-bar" hidden></div>
       {% else %}
-      <p>No loans recorded.</p>
+      <p class="empty-note">No loans recorded.</p>
       {% endif %}
     </section>
+
+    <dialog id="staff-detail-modal" class="action-modal modal-wide" aria-labelledby="staff-modal-title">
+      <div class="modal-header">
+        <div>
+          <h2 id="staff-modal-title" class="modal-title"></h2>
+          <p id="staff-modal-subtitle" class="modal-subtitle"></p>
+        </div>
+        <button id="staff-modal-close" type="button" class="modal-close" aria-label="Close dialog">&times;</button>
+      </div>
+      <div id="staff-modal-body" class="modal-body"></div>
+      <div class="modal-footer">
+        <button id="staff-modal-done" type="button" class="btn-modal-close">Close</button>
+      </div>
+    </dialog>
     {% endif %}
   </main>
+
+  <script src="{{ url_for('static', filename='staff.js') }}"></script>
 </body>
 </html>
