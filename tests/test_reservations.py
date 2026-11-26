@@ -2,6 +2,7 @@ import sqlite3
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
+from datetime import datetime, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Barrier
@@ -57,6 +58,10 @@ class ReservationAPITestCase(unittest.TestCase):
                 self.assertEqual(res["available_quantity"], 2)
                 self.assertEqual(len(res["pickup_code"]), PICKUP_CODE_LENGTH)
                 self.assertTrue(set(res["pickup_code"]).issubset(set(PICKUP_CODE_ALPHABET)))
+                self.assertEqual(
+                    datetime.fromisoformat(res["expires_at"]) - datetime.fromisoformat(res["reserved_at"]),
+                    timedelta(minutes=duration),
+                )
 
                 cancel = self.client.post(
                     "/api/reservations/cancel",
@@ -75,6 +80,56 @@ class ReservationAPITestCase(unittest.TestCase):
                 )
                 self.assertEqual(resp.status_code, 400)
         self.assertEqual(self.database_state(), original)
+
+    def test_rejects_a_reservation_when_no_units_are_available(self):
+        original = self.database_state()
+        response = self.client.post(
+            "/api/reservations", json={"card_id": "20260001", "item_id": 3}
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.get_json()["message"], "This item is out of stock.")
+        self.assertEqual(self.database_state(), original)
+
+    def test_retry_generates_a_unique_code_after_a_collision(self):
+        with patch("database._generate_pickup_code", side_effect=["ABC234", "ABC234", "DEF567"]):
+            first = self.client.post("/api/reservations", json={"card_id": "20260001", "item_id": 2})
+            self.assertEqual(first.status_code, 201)
+            original_code = first.get_json()["reservation"]["pickup_code"]
+            cancelled = self.client.post("/api/reservations/cancel", json={"pickup_code": original_code})
+            self.assertEqual(cancelled.status_code, 200)
+
+            second = self.client.post("/api/reservations", json={"card_id": "20260001", "item_id": 2})
+
+        self.assertEqual(second.status_code, 201)
+        self.assertEqual(second.get_json()["reservation"]["pickup_code"], "DEF567")
+        stock, _, reservations = self.database_state()
+        self.assertEqual(dict(stock)[2], 2)
+        self.assertEqual([(row[3], row[4]) for row in reservations], [
+            ("ABC234", "cancelled"),
+            ("DEF567", "active"),
+        ])
+
+    def test_reservation_status_shows_active_reservation_until_cancelled(self):
+        created = self.client.post("/api/reservations", json={"card_id": "20260001", "item_id": 2})
+        self.assertEqual(created.status_code, 201)
+        reservation = created.get_json()["reservation"]
+
+        status = self.client.post("/api/reservations/status", json={"card_id": " 20260001 "})
+        self.assertEqual(status.status_code, 200)
+        active = status.get_json()["active_reservation"]
+        self.assertEqual(active["reservation_id"], reservation["reservation_id"])
+        self.assertEqual(active["pickup_code"], reservation["pickup_code"])
+        self.assertEqual(active["expires_at"], reservation["expires_at"])
+
+        cancelled = self.client.post(
+            "/api/reservations/cancel",
+            json={"card_id": "20260001", "reservation_id": reservation["reservation_id"]},
+        )
+        self.assertEqual(cancelled.status_code, 200)
+        status = self.client.post("/api/reservations/status", json={"card_id": "20260001"})
+        self.assertEqual(status.status_code, 200)
+        self.assertIsNone(status.get_json()["active_reservation"])
 
     def test_claim_by_pickup_code_creates_loan_without_double_decrementing_stock(self):
         created = self.client.post(
@@ -184,6 +239,51 @@ class ReservationAPITestCase(unittest.TestCase):
         active = [r for r in reservations if r[1] == "20260001" and r[4] == "active"]
         self.assertEqual(len(active), 1)
 
+    def test_two_cards_cannot_reserve_the_same_last_unit(self):
+        with closing(sqlite3.connect(self.database_path)) as database, database:
+            database.execute("INSERT INTO registered_cards (card_id) VALUES ('20260003')")
+            database.execute("UPDATE equipment SET available_quantity = 1 WHERE item_id = 2")
+        original_loans = self.database_state()[1]
+
+        cards = ("20260001", "20260003")
+        responses = self.concurrent_posts(
+            "/api/reservations", [{"card_id": card_id, "item_id": 2} for card_id in cards]
+        )
+
+        self.assertEqual(sorted(response.status_code for response in responses), [201, 409])
+        winner = cards[0] if responses[0].status_code == 201 else cards[1]
+        rejected = next(response for response in responses if response.status_code == 409)
+        self.assertEqual(rejected.get_json()["message"], "This item is out of stock.")
+        stock, loans, reservations = self.database_state()
+        self.assertEqual(dict(stock)[2], 0)
+        self.assertEqual(loans, original_loans)
+        self.assertEqual([(row[1], row[2], row[4]) for row in reservations], [
+            (winner, 2, "active"),
+        ])
+
+    def test_concurrent_and_repeated_cancellation_restores_stock_once(self):
+        original_stock, original_loans, _ = self.database_state()
+        created = self.client.post("/api/reservations", json={"card_id": "20260001", "item_id": 2})
+        self.assertEqual(created.status_code, 201)
+        reservation = created.get_json()["reservation"]
+        code_payload = {"pickup_code": reservation["pickup_code"]}
+
+        responses = self.concurrent_posts("/api/reservations/cancel", [
+            code_payload,
+            {"card_id": "20260001", "reservation_id": reservation["reservation_id"]},
+        ])
+
+        self.assertEqual(sorted(response.status_code for response in responses), [200, 409])
+        stock, loans, reservations = self.database_state()
+        self.assertEqual(stock, original_stock)
+        self.assertEqual(loans, original_loans)
+        self.assertEqual([(row[0], row[4]) for row in reservations], [
+            (reservation["reservation_id"], "cancelled"),
+        ])
+        retry = self.client.post("/api/reservations/cancel", json=code_payload)
+        self.assertEqual(retry.status_code, 409)
+        self.assertEqual(self.database_state(), (stock, loans, reservations))
+
     def test_staff_dashboard_displays_reservations(self):
         created = self.client.post("/api/reservations", json={"card_id": "20260001", "item_id": 2})
         code = created.get_json()["reservation"]["pickup_code"]
@@ -194,6 +294,50 @@ class ReservationAPITestCase(unittest.TestCase):
         self.assertIn("Due (UTC)", html)
         self.assertIn('id="staff-detail-modal"', html)
         self.assertIn('data-summary-modal="overdue_loans"', html)
+
+    def test_staff_dashboard_counts_only_active_loans_past_the_two_hour_deadline(self):
+        with closing(sqlite3.connect(self.database_path)) as database, database:
+            database.executemany(
+                "INSERT INTO registered_cards (card_id) VALUES (?)",
+                [("20260003",), ("20260004",), ("20260005",)],
+            )
+            database.execute("DELETE FROM loans")
+            database.executemany(
+                "INSERT INTO loans (loan_id, card_id, item_id, borrowed_at, returned_at) VALUES (?, ?, 1, ?, ?)",
+                [
+                    (1, "20260001", "2026-01-01 10:00:01", None),
+                    (2, "20260003", "2026-01-01 10:00:00", None),
+                    (3, "20260004", "2026-01-01 09:59:59", None),
+                    (4, "20260005", "2026-01-01 09:59:59", "2026-01-01 11:00:00"),
+                ],
+            )
+
+        connect = sqlite3.connect
+
+        def connect_at_fixed_time(*args, **kwargs):
+            database = connect(*args, **kwargs)
+            database.create_function("current_timestamp", 0, lambda: "2026-01-01 12:00:00")
+            return database
+
+        with patch("database.sqlite3.connect", side_effect=connect_at_fixed_time):
+            staff = self.client.get("/staff")
+
+        self.assertEqual(staff.status_code, 200)
+        html = staff.get_data(as_text=True)
+        for loan_id, due_at, overdue in (
+            (1, "12:00:01", False),
+            (2, "12:00:00", False),
+            (3, "11:59:59", True),
+            (4, "11:59:59", False),
+        ):
+            with self.subTest(loan_id=loan_id):
+                row = html.split(f'<tr id="loan-{loan_id}">', 1)[1].split("</tr>", 1)[0]
+                self.assertIn(f'2026-01-01T{due_at}Z', row)
+                self.assertEqual('class="cell-overdue"' in row, overdue)
+        self.assertRegex(
+            html,
+            r'data-summary-modal="overdue_loans">\s*<span[^\n]+\n\s*<strong class="metric-value">1</strong>',
+        )
 
     def test_pickup_counter_focuses_on_code_claim_and_returns(self):
         counter_page = self.client.get("/counter")
