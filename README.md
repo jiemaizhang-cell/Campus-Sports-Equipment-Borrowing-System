@@ -57,6 +57,16 @@ Or generate a timestamped evidence log:
 powershell -ExecutionPolicy Bypass -File .\run_tests_windows.ps1
 ```
 
+The optional browser tests exercise the reservation, pickup, return, cancellation,
+and inventory controls in Chromium. They start a local server with a temporary
+database. With the project virtual environment active, run:
+
+```bash
+python -m pip install pytest playwright
+python -m playwright install chromium --only-shell
+python -m pytest -v tests/browser/pickup_flow.py
+```
+
 ## Traceability
 
 - B1 requirement / issue: https://github.com/jiemaizhang-cell/Campus-Sports-Equipment-Borrowing-System/issues/1
