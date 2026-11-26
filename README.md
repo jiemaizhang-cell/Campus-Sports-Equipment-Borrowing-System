@@ -1,6 +1,6 @@
 # Campus Sports Equipment Borrowing System
 
-Software Engineering Assignment 1 prototype. It verifies test cards, displays live equipment availability, supports on-site borrowing and returning, and provides timed equipment reservations (10, 15, or 20 minutes) with 6-character pickup codes. The prototype uses a local SQLite database and enforces one active loan or reservation per card.
+Software Engineering Assignment 1 prototype built with Flask and SQLite. It separates student self-service borrowing from front-desk staff operations into two distinct portals, protects student actions with password authentication and server-side sessions (no self-registration), issues 6-character pickup codes for both immediate 5-minute pickup and timed reservations (**5**, **10**, **15**, or **20** minutes), and enforces one active loan or reservation per card.
 
 ## Requirements
 
@@ -23,22 +23,27 @@ python -m pip install -r requirements.txt
 ```bash
 python app.py
 # Optional port override (e.g. if port 5000 is used by macOS AirPlay Receiver):
-PORT=5001 python app.py
+PORT=5050 python app.py
 ```
 
-Open `http://127.0.0.1:5000/` and enter a test card ID (or use the quick demo ID chips) to select **Verify Test Card**. The first visit initializes `instance/campus.db` with demo data. Try `20260001` for a registered card with no loan, `20260002` for a card with an active basketball loan, `20260099` for an unregistered card, and `ABC123` for a format error.
+The first request initializes `instance/campus.db` with demo data. Student and staff interfaces are separated into two independent systems with no cross-navigation links:
 
-### Borrowing, reserving, and returning
+### 1. Student Borrowing Portal (`/login` and `/`)
 
-- **Borrow on-site**: After verifying an eligible card, select an available item (or click an available row in the inventory table) and click **Borrow Equipment**. On-site and claimed loans have a 2-hour due window.
-- **Reserve for pickup**: Select an available item and a hold duration (**10**, **15**, or **20** minutes), then click **Reserve & Get Code**. One unit is held immediately and a unique 6-character pickup code is generated.
-- **Claim with pickup code**: Switch to the **Pickup Code** tab (or use the quick claim bar in **Staff view**), enter the 6-character code, and click **Claim Equipment**. Expired reservations automatically release their held unit back to stock.
-- **Cancel reservation**: Verify the card again to view its active reservation and click **Cancel Reservation** to release the held unit immediately.
-- **Return equipment**: Verify a card with an active loan and click **Return Equipment** to close the loan and restore stock.
+Open `http://127.0.0.1:5000/login` (or `http://127.0.0.1:5050/login` if overriding port) and sign in with a registered 8-digit student card ID and password. Unauthenticated visits to `/` redirect to `/login`, and self-registration is disabled.
 
-### Staff view
+- **Demo accounts**:
+  - `20260001` / initial password `0001` (registered, free)
+  - `20260002` / initial password `0002` (registered, has an active Basketball loan)
+- **Borrow Now (5m pickup)**: After signing in, select an available item (or click an available row in the inventory table) and click **Borrow Now (5m pickup)** to hold 1 unit and receive a 6-character pickup code valid for 5 minutes.
+- **Reserve & Get Code**: Select an available item and a hold duration (**5**, **10**, **15**, or **20** minutes), then click **Reserve & Get Code**. One unit is held immediately and a unique 6-character pickup code is generated with a live countdown.
+- **Cancel reservation**: Click **Cancel Reservation** (two-step confirmation) on your active ticket to release the held unit immediately. Expired holds automatically release stock back to inventory.
+- **Change Password & Log out**: Click **Change Password** in the top bar to update your own password (`6–64` characters, verifying your current password), or click **Log out** to end the session. All student endpoints enforce server-side session checks (`401`/`403`) so no user can act on another student's card.
 
-Open **Staff view** from the top navigation or visit `http://127.0.0.1:5000/staff` to see KPI summary metrics, live equipment inventory, reservations (`Active`, `Claimed`, `Cancelled`, `Expired`) with quick claim/cancel actions, and loan history with due/overdue indicators, status filters, and search. Timestamps are shown in UTC.
+### 2. Staff Desk System (`/counter` and `/staff`)
+
+- **Pickup Counter** (`http://127.0.0.1:5000/counter`): Minimal handover screen where staff enter the student's 6-character pickup code and click **Verify & Hand Out** to convert the held reservation into an active 2-hour loan without double-decrementing stock.
+- **Staff view** (`http://127.0.0.1:5000/staff`): Displays KPI summary metrics and detail modals, live equipment inventory, reservations (`Active`, `Claimed`, `Cancelled`, `Expired`) with quick claim/cancel actions, loan history with due/overdue indicators, status filters, search, a standalone **Refresh staff view** button, and a **Return** confirmation modal to close active loans and restore stock. Timestamps are shown in UTC.
 
 ## Tests
 
@@ -57,9 +62,9 @@ Or generate a timestamped evidence log:
 powershell -ExecutionPolicy Bypass -File .\run_tests_windows.ps1
 ```
 
-The optional browser tests exercise the reservation, pickup, return, cancellation,
-and inventory controls in Chromium. They start a local server with a temporary
-database. With the project virtual environment active, run:
+The automated suite contains **63 tests** across `tests/test_api.py` (36), `tests/test_reservations.py` (18), and `tests/test_validation.py` (9).
+
+The optional browser tests exercise the reservation, pickup, return, cancellation, and inventory controls in Chromium against a temporary database. With the project virtual environment active, run:
 
 ```bash
 python -m pip install pytest playwright
@@ -80,4 +85,4 @@ The prototype uses synthetic test card IDs and local demo data. No external camp
 
 ## Attribution
 
-Record third-party libraries (`Flask`, `pytest`), reused code, and any permitted AI assistance according to the assessment integrity requirements.
+Record third-party libraries (`Flask`, `Werkzeug`, `pytest`), reused code, and any permitted AI assistance according to the assessment integrity requirements.
