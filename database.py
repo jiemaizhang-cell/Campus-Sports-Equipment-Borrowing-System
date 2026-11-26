@@ -6,6 +6,8 @@ from collections import Counter
 from contextlib import closing, contextmanager
 from pathlib import Path
 
+from werkzeug.security import check_password_hash, generate_password_hash
+
 ALLOWED_RESERVATION_MINUTES = (5, 10, 15, 20)
 DEFAULT_RESERVATION_MINUTES = 10
 PICKUP_CODE_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
@@ -46,6 +48,10 @@ class ReservationStateError(Exception):
 
 class InvalidReservationDuration(Exception):
     """The requested reservation hold duration is not allowed."""
+
+
+class InvalidPassword(Exception):
+    """The supplied current password does not match the registered card."""
 
 
 def record_loan(database, card_id, item_id):
@@ -352,6 +358,58 @@ def _read_reservation_details(database, reservation_id):
     """, (reservation_id,)).fetchone())
 
 
+def _hash_password(password):
+    return generate_password_hash(password, method="pbkdf2:sha256:100000")
+
+
+def _verify_card_password(row, password):
+    stored_hash = row["password_hash"]
+    if stored_hash:
+        return check_password_hash(stored_hash, password)
+    return password == row["card_id"][-4:]
+
+
+def authenticate_card(database_path, card_id, password):
+    """Verify a registered card ID and password, returning loan status row, False on bad password, or None."""
+    with _open_database(database_path) as database:
+        _expire_overdue_if_needed(database)
+        row = database.execute(
+            "SELECT card_id, password_hash FROM registered_cards WHERE card_id = ?",
+            (card_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        if not _verify_card_password(row, password):
+            return False
+        return database.execute("""
+            SELECT cards.card_id, loans.loan_id, loans.item_id, equipment.name AS item_name
+            FROM registered_cards AS cards
+            LEFT JOIN loans ON loans.card_id = cards.card_id AND loans.returned_at IS NULL
+            LEFT JOIN equipment ON equipment.item_id = loans.item_id
+            WHERE cards.card_id = ?
+            ORDER BY loans.loan_id DESC
+            LIMIT 1
+        """, (card_id,)).fetchone()
+
+
+def change_card_password(database_path, card_id, current_password, new_password):
+    """Verify the current password and update password_hash for an existing registered card."""
+    with _open_database(database_path) as database, database:
+        database.execute("BEGIN IMMEDIATE")
+        row = database.execute(
+            "SELECT card_id, password_hash FROM registered_cards WHERE card_id = ?",
+            (card_id,),
+        ).fetchone()
+        if row is None:
+            raise CardNotRegistered("This test card ID is not registered.")
+        if not _verify_card_password(row, current_password):
+            raise InvalidPassword("Current password is incorrect.")
+        database.execute(
+            "UPDATE registered_cards SET password_hash = ? WHERE card_id = ?",
+            (_hash_password(new_password), card_id),
+        )
+
+
 def find_card_loan_status(database_path, card_id):
     """Find a registered card and any outstanding loan for it."""
     with _open_database(database_path) as database:
@@ -448,6 +506,11 @@ def _schema_names(database):
     }
 
 
+def _has_column(database, table_name, column_name):
+    rows = database.execute(f"PRAGMA table_info({table_name})").fetchall()
+    return any(row["name"] == column_name for row in rows)
+
+
 def _initialize_database(database):
     required = {
         "registered_cards",
@@ -457,7 +520,7 @@ def _initialize_database(database):
         "reservations",
         "unique_active_reservation_per_card",
     }
-    if required.issubset(_schema_names(database)):
+    if required.issubset(_schema_names(database)) and _has_column(database, "registered_cards", "password_hash"):
         return
 
     # Apply schema changes and demo seeds together while preserving existing rows.
@@ -466,10 +529,26 @@ def _initialize_database(database):
         schema = _schema_names(database)
         if "registered_cards" not in schema:
             database.execute(
-                "CREATE TABLE registered_cards (card_id TEXT NOT NULL PRIMARY KEY)"
+                "CREATE TABLE registered_cards (card_id TEXT NOT NULL PRIMARY KEY, password_hash TEXT)"
             )
             database.execute(
-                "INSERT INTO registered_cards (card_id) VALUES (?)", ("20260001",)
+                "INSERT INTO registered_cards (card_id, password_hash) VALUES (?, ?)",
+                ("20260001", _hash_password("0001")),
+            )
+        elif not _has_column(database, "registered_cards", "password_hash"):
+            database.execute("ALTER TABLE registered_cards ADD COLUMN password_hash TEXT")
+            if _has_column(database, "registered_cards", "pin_hash"):
+                database.execute(
+                    "UPDATE registered_cards SET password_hash = pin_hash WHERE password_hash IS NULL AND pin_hash IS NOT NULL"
+                )
+
+        missing_passwords = database.execute(
+            "SELECT card_id FROM registered_cards WHERE password_hash IS NULL"
+        ).fetchall()
+        for row in missing_passwords:
+            database.execute(
+                "UPDATE registered_cards SET password_hash = ? WHERE card_id = ?",
+                (_hash_password(row["card_id"][-4:]), row["card_id"]),
             )
         if "equipment" not in schema:
             database.execute("""
@@ -541,8 +620,8 @@ def _seed_demo_loan(database):
     # Add a pre-existing demo loan only for a newly inserted demo card.
     demo_card_id = "20260002"
     inserted = database.execute(
-        "INSERT INTO registered_cards (card_id) VALUES (?) ON CONFLICT (card_id) DO NOTHING",
-        (demo_card_id,),
+        "INSERT INTO registered_cards (card_id, password_hash) VALUES (?, ?) ON CONFLICT (card_id) DO NOTHING",
+        (demo_card_id, _hash_password("0002")),
     )
     if inserted.rowcount == 1:
         record_loan(database, demo_card_id, demo_item[0])

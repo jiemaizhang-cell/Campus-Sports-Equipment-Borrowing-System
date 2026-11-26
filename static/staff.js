@@ -226,19 +226,78 @@ document.querySelectorAll('.staff-row-cancel').forEach((btn) => {
   });
 });
 
+const staffConfirmModal = document.getElementById('staff-confirm-modal');
+const staffConfirmTitle = document.getElementById('staff-confirm-title');
+const staffConfirmMessage = document.getElementById('staff-confirm-message');
+const staffConfirmOkBtn = document.getElementById('staff-confirm-ok');
+const staffConfirmCancelBtn = document.getElementById('staff-confirm-cancel');
+const staffConfirmCloseX = document.getElementById('staff-confirm-x');
+let pendingStaffConfirmAction = null;
+
+function closeStaffConfirmModal() {
+  pendingStaffConfirmAction = null;
+  if (staffConfirmOkBtn) staffConfirmOkBtn.disabled = false;
+  if (staffConfirmModal?.open) staffConfirmModal.close();
+}
+
+function openStaffConfirmModal({title, message, confirmLabel = 'Confirm', danger = false, onConfirm}) {
+  if (!staffConfirmModal || typeof staffConfirmModal.showModal !== 'function') {
+    onConfirm();
+    return;
+  }
+  pendingStaffConfirmAction = onConfirm;
+  staffConfirmTitle.textContent = title;
+  staffConfirmMessage.textContent = message;
+  staffConfirmOkBtn.textContent = confirmLabel;
+  staffConfirmOkBtn.className = danger ? 'btn-modal-danger' : 'btn-modal-close';
+  staffConfirmOkBtn.disabled = false;
+  staffConfirmModal.showModal();
+  staffConfirmOkBtn.focus();
+}
+
+if (staffConfirmModal) {
+  staffConfirmCloseX?.addEventListener('click', closeStaffConfirmModal);
+  staffConfirmCancelBtn?.addEventListener('click', closeStaffConfirmModal);
+  staffConfirmModal.addEventListener('click', (event) => {
+    if (event.target === staffConfirmModal) closeStaffConfirmModal();
+  });
+  staffConfirmModal.addEventListener('close', () => {
+    pendingStaffConfirmAction = null;
+    if (staffConfirmOkBtn) staffConfirmOkBtn.disabled = false;
+  });
+  staffConfirmOkBtn?.addEventListener('click', async () => {
+    if (!pendingStaffConfirmAction) return;
+    const action = pendingStaffConfirmAction;
+    staffConfirmOkBtn.disabled = true;
+    await action();
+    closeStaffConfirmModal();
+  });
+}
+
 document.querySelectorAll('.staff-row-return').forEach((btn) => {
-  attachTwoStepConfirm(btn, 'Return', 'Confirm?', async () => {
-    btn.disabled = true;
-    const {response, data} = await postStaffAction('/api/return', {
-      card_id: btn.dataset.cardId,
-      loan_id: btn.dataset.loanId
+  btn.addEventListener('click', () => {
+    const cardId = btn.dataset.cardId;
+    const loanId = btn.dataset.loanId;
+    const itemName = btn.dataset.itemName || 'this equipment';
+    openStaffConfirmModal({
+      title: 'Confirm Return',
+      message: `Confirm returning ${itemName} for card ${cardId}?`,
+      confirmLabel: 'Confirm Return',
+      danger: false,
+      onConfirm: async () => {
+        btn.disabled = true;
+        const {response, data} = await postStaffAction('/api/return', {
+          card_id: cardId,
+          loan_id: loanId
+        });
+        if (!response.ok) {
+          btn.disabled = false;
+          showStaffFeedback(data.message || 'Unable to return equipment.', false);
+          return;
+        }
+        saveFlashAndReload(`${data.message} (Card ${cardId}).`);
+      }
     });
-    if (!response.ok) {
-      btn.disabled = false;
-      showStaffFeedback(data.message || 'Unable to return equipment.', false);
-      return;
-    }
-    saveFlashAndReload(`${data.message} (Card ${btn.dataset.cardId}).`);
   });
 });
 

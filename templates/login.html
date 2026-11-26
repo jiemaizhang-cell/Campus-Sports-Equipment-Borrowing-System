@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Student Sign In | Campus Sports Borrowing</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+  <header class="app-header">
+    <div class="header-inner">
+      <div class="brand-cluster">
+        <a class="brand-mark" href="{{ url_for('login_page') }}">Campus Sports Borrowing</a>
+        <span class="portal-badge">Student Portal</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="page-main login-main">
+    <section class="desk-surface login-surface" aria-labelledby="login-heading">
+      <div class="login-head">
+        <h1 id="login-heading">Student Sign In</h1>
+        <p class="intro">Sign in with your registered student card ID and password to borrow or reserve sports equipment.</p>
+      </div>
+
+      <form id="login-form" class="login-form" action="{{ url_for('login_submit') }}" method="post" novalidate>
+        <div class="login-field">
+          <label for="login-card-id">Student Card ID</label>
+          <input id="login-card-id" name="card_id" type="text" inputmode="numeric"
+                 autocomplete="username" placeholder="Enter 8-digit card ID (e.g. 20260001)"
+                 maxlength="64" autofocus />
+        </div>
+
+        <div class="login-field">
+          <label for="login-password">Password</label>
+          <input id="login-password" name="password" type="password"
+                 autocomplete="current-password" placeholder="Enter your password"
+                 maxlength="64" />
+        </div>
+
+        <div id="login-feedback" class="feedback" role="status" aria-live="polite" aria-atomic="true" hidden></div>
+
+        <button id="login-submit" type="submit" class="login-submit-btn">Sign In</button>
+
+        <p class="helper login-hint">Demo accounts: <code>20260001</code> (initial password <code>0001</code>) · <code>20260002</code> (initial password <code>0002</code>)</p>
+      </form>
+    </section>
+  </main>
+
+  <script src="{{ url_for('static', filename='login.js') }}"></script>
+</body>
+</html>

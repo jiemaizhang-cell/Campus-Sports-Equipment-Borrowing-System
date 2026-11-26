@@ -20,7 +20,13 @@ class ReservationAPITestCase(unittest.TestCase):
         config.start()
         self.addCleanup(config.stop)
         self.client = app.test_client()
-        self.client.get("/")
+        self.login("20260001", "0001")
+
+    def login(self, card_id="20260001", password=None, client=None):
+        target = client or self.client
+        normalized = card_id.strip() if isinstance(card_id, str) else card_id
+        resolved_pw = password if password is not None else (normalized[-4:] if isinstance(normalized, str) else "")
+        return target.post("/api/login", json={"card_id": card_id, "password": resolved_pw})
 
     def database_state(self):
         with closing(sqlite3.connect(self.database_path)) as database:
@@ -33,11 +39,13 @@ class ReservationAPITestCase(unittest.TestCase):
             ).fetchall()
         return stock, loans, reservations
 
-    def concurrent_posts(self, path, payloads):
+    def concurrent_posts(self, path, payloads, login_card_id="20260001"):
         start = Barrier(len(payloads))
 
         def attempt(payload):
             client = app.test_client()
+            if login_card_id:
+                self.login(login_card_id, client=client)
             start.wait(timeout=5)
             return client.post(path, json=payload)
 
@@ -158,10 +166,12 @@ class ReservationAPITestCase(unittest.TestCase):
 
     def test_mutual_exclusion_between_loans_and_reservations(self):
         # Card 20260002 has an active demo loan -> cannot reserve
+        self.login("20260002", "0002")
         blocked_res = self.client.post("/api/reservations", json={"card_id": "20260002", "item_id": 2})
         self.assertEqual(blocked_res.status_code, 409)
 
         # Card 20260001 reserves -> cannot walk-in borrow or reserve a second item
+        self.login("20260001", "0001")
         first = self.client.post("/api/reservations", json={"card_id": "20260001", "item_id": 1})
         self.assertEqual(first.status_code, 201)
 
@@ -170,6 +180,30 @@ class ReservationAPITestCase(unittest.TestCase):
 
         walkin_borrow = self.client.post("/api/borrow", json={"card_id": "20260001", "item_id": 2})
         self.assertEqual(walkin_borrow.status_code, 409)
+
+    def test_cannot_reserve_or_cancel_another_students_card(self):
+        res = self.client.post("/api/reservations", json={"item_id": 1, "duration_minutes": 10})
+        self.assertEqual(res.status_code, 201)
+        res_id = res.get_json()["reservation"]["reservation_id"]
+
+        # Unauthenticated client cannot reserve or cancel by card
+        anon = app.test_client()
+        self.assertEqual(anon.post("/api/reservations", json={"card_id": "20260001", "item_id": 2}).status_code, 401)
+        self.assertEqual(
+            anon.post("/api/reservations/cancel", json={"card_id": "20260001", "reservation_id": res_id}).status_code,
+            401,
+        )
+
+        # Card 20260002 cannot reserve or cancel for card 20260001
+        self.login("20260002", "0002")
+        self.assertEqual(
+            self.client.post("/api/reservations", json={"card_id": "20260001", "item_id": 2}).status_code,
+            403,
+        )
+        self.assertEqual(
+            self.client.post("/api/reservations/cancel", json={"card_id": "20260001", "reservation_id": res_id}).status_code,
+            403,
+        )
 
     def test_concurrent_reservations_for_same_card_commit_only_one(self):
         responses = self.concurrent_posts(
@@ -202,6 +236,9 @@ class ReservationAPITestCase(unittest.TestCase):
         self.assertNotIn(b"Active loans (return at counter)", counter_page.data)
         self.assertNotIn(b"Pending pickups", counter_page.data)
         self.assertNotIn(b"Equipment availability", counter_page.data)
+
+        self.assertNotIn(b'href="/"', counter_page.data)
+        self.assertNotIn(b'href="/login"', counter_page.data)
 
         created = self.client.post("/api/reservations", json={"card_id": "20260001", "item_id": 2})
         code = created.get_json()["reservation"]["pickup_code"]

@@ -22,6 +22,12 @@ class PrototypeAPITestCase(unittest.TestCase):
         self.addCleanup(config.stop)
         self.client = app.test_client()
 
+    def login(self, card_id="20260001", password=None, client=None):
+        target = client or self.client
+        normalized = card_id.strip() if isinstance(card_id, str) else card_id
+        resolved_pw = password if password is not None else (normalized[-4:] if isinstance(normalized, str) else "")
+        return target.post("/api/login", json={"card_id": card_id, "password": resolved_pw})
+
     def database_state(self):
         with closing(sqlite3.connect(self.database_path)) as database:
             stock = database.execute(
@@ -30,11 +36,13 @@ class PrototypeAPITestCase(unittest.TestCase):
             loans = database.execute("SELECT * FROM loans ORDER BY loan_id").fetchall()
         return stock, loans
 
-    def concurrent_posts(self, path, payloads):
+    def concurrent_posts(self, path, payloads, login_card_id=None):
         start = Barrier(len(payloads))
 
         def attempt(payload):
             client = app.test_client()
+            if login_card_id is not None:
+                self.login(login_card_id, client=client)
             start.wait(timeout=5)
             return client.post(path, json=payload)
 
@@ -56,10 +64,25 @@ class PrototypeAPITestCase(unittest.TestCase):
 
 
 class CardAPIIntegrationTests(PrototypeAPITestCase):
-    def test_home_page(self):
-        response = self.client.get("/")
-        self.assertEqual(response.status_code, 200)
-        self.assertIn(b"Student Card ID", response.data)
+    def test_home_page_requires_login_and_separates_systems(self):
+        unauth = self.client.get("/")
+        self.assertEqual(unauth.status_code, 302)
+        self.assertIn("/login", unauth.headers["Location"])
+
+        login_page = self.client.get("/login")
+        self.assertEqual(login_page.status_code, 200)
+        self.assertIn(b"Student Card ID", login_page.data)
+        self.assertIn(b"Password", login_page.data)
+        self.assertNotIn(b'href="/staff"', login_page.data)
+        self.assertNotIn(b'href="/counter"', login_page.data)
+
+        self.assertEqual(self.login("20260001", "0001").status_code, 200)
+        home = self.client.get("/")
+        self.assertEqual(home.status_code, 200)
+        self.assertIn(b"20260001", home.data)
+        self.assertIn(b'id="change-password-btn"', home.data)
+        self.assertNotIn(b'href="/staff"', home.data)
+        self.assertNotIn(b'href="/counter"', home.data)
 
     def test_valid_card(self):
         response = self.client.post("/api/validate-card", json={"card_id": "20260001"})
@@ -81,9 +104,87 @@ class CardAPIIntegrationTests(PrototypeAPITestCase):
 
 
 class CardVerificationTests(PrototypeAPITestCase):
-    def test_home_page_uses_verification_endpoint(self):
-        response = self.client.get("/")
-        self.assertIn(b'action="/api/verify-card"', response.data)
+    def test_login_page_uses_login_endpoint_and_rejects_bad_password(self):
+        response = self.client.get("/login")
+        self.assertIn(b'action="/api/login"', response.data)
+
+        bad_pw = self.login("20260001", "wrongpass")
+        self.assertEqual(bad_pw.status_code, 401)
+        self.assertFalse(bad_pw.get_json()["valid"])
+
+        unknown = self.login("20260099", "0099")
+        self.assertEqual(unknown.status_code, 401)
+
+        ok = self.login(" 20260001 ", "0001")
+        self.assertEqual(ok.status_code, 200)
+        self.assertEqual(ok.get_json()["card_id"], "20260001")
+
+        out = self.client.post("/logout")
+        self.assertEqual(out.status_code, 302)
+        self.assertEqual(self.client.get("/").status_code, 302)
+
+    def test_change_password_flow_and_no_account_creation(self):
+        # No registration endpoint exists
+        for path in ("/register", "/signup", "/api/register"):
+            self.assertEqual(self.client.post(path, json={"card_id": "20260099", "password": "secret12"}).status_code, 404)
+
+        # Must be signed in to change password
+        anon_res = self.client.post("/api/change-password", json={
+            "current_password": "0001",
+            "new_password": "Campus#2026",
+            "confirm_password": "Campus#2026",
+        })
+        self.assertEqual(anon_res.status_code, 401)
+
+        self.login("20260001", "0001")
+
+        # Cannot target another card
+        cross = self.client.post("/api/change-password", json={
+            "card_id": "20260002",
+            "current_password": "0002",
+            "new_password": "Campus#2026",
+            "confirm_password": "Campus#2026",
+        })
+        self.assertEqual(cross.status_code, 403)
+
+        # Validation checks: wrong current, too short, blank spaces, mismatch, same password
+        self.assertEqual(self.client.post("/api/change-password", json={
+            "current_password": "wrong",
+            "new_password": "Campus#2026",
+            "confirm_password": "Campus#2026",
+        }).status_code, 401)
+        self.assertEqual(self.client.post("/api/change-password", json={
+            "current_password": "0001",
+            "new_password": "123",
+            "confirm_password": "123",
+        }).status_code, 400)
+        self.assertEqual(self.client.post("/api/change-password", json={
+            "current_password": "0001",
+            "new_password": "      ",
+            "confirm_password": "      ",
+        }).status_code, 400)
+        self.assertEqual(self.client.post("/api/change-password", json={
+            "current_password": "0001",
+            "new_password": "Campus#2026",
+            "confirm_password": "Different#1",
+        }).status_code, 400)
+        self.assertEqual(self.client.post("/api/change-password", json={
+            "current_password": "0001",
+            "new_password": "0001",
+            "confirm_password": "0001",
+        }).status_code, 400)
+
+        # Valid change
+        changed = self.client.post("/api/change-password", json={
+            "current_password": "0001",
+            "new_password": "Campus#2026",
+            "confirm_password": "Campus#2026",
+        })
+        self.assertEqual(changed.status_code, 200)
+
+        self.client.post("/logout")
+        self.assertEqual(self.login("20260001", "0001").status_code, 401)
+        self.assertEqual(self.login("20260001", "Campus#2026").status_code, 200)
 
     def test_accepts_registered_card_after_normalization(self):
         response = self.client.post("/api/verify-card", json={"card_id": " 20260001 "})
@@ -128,6 +229,10 @@ class CardVerificationTests(PrototypeAPITestCase):
 
 
 class EquipmentAvailabilityTests(PrototypeAPITestCase):
+    def setUp(self):
+        super().setUp()
+        self.login("20260001", "0001")
+
     def test_home_displays_each_demo_item_with_its_quantity(self):
         response = self.client.get("/")
         self.assertEqual(response.status_code, 200)
@@ -162,16 +267,21 @@ class EquipmentAvailabilityTests(PrototypeAPITestCase):
         self.assertRegex(html, r'Badminton racket</th>\s*<td>4</td>\s*<td class="stock-available">')
 
     def test_initializes_equipment_in_an_existing_card_database(self):
-        self.database_path.parent.mkdir()
-        with closing(sqlite3.connect(self.database_path)) as database, database:
+        temp_dir = TemporaryDirectory()
+        self.addCleanup(temp_dir.cleanup)
+        legacy_db = Path(temp_dir.name) / "instance" / "campus.db"
+        legacy_db.parent.mkdir()
+        with closing(sqlite3.connect(legacy_db)) as database, database:
             database.execute("CREATE TABLE registered_cards (card_id TEXT NOT NULL PRIMARY KEY)")
             database.execute("INSERT INTO registered_cards VALUES (?)", ("02026001",))
 
-        self.assertIn(b"Badminton racket", self.client.get("/").data)
-        registered = self.client.post("/api/verify-card", json={"card_id": "02026001"})
-        demo_card = self.client.post("/api/verify-card", json={"card_id": "20260001"})
-        self.assertEqual(registered.status_code, 200)
-        self.assertEqual(demo_card.status_code, 404)
+        with patch.dict(app.config, DATABASE=legacy_db):
+            self.login("02026001", "6001")
+            self.assertIn(b"Badminton racket", self.client.get("/").data)
+            registered = self.client.post("/api/verify-card", json={"card_id": "02026001"})
+            demo_card = self.client.post("/api/verify-card", json={"card_id": "20260001"})
+            self.assertEqual(registered.status_code, 200)
+            self.assertEqual(demo_card.status_code, 404)
 
 
 class ActiveLoanTests(PrototypeAPITestCase):
@@ -195,7 +305,7 @@ class ActiveLoanTests(PrototypeAPITestCase):
         self.assertIsNone(response.get_json()["active_loan"])
 
     def test_migration_keeps_an_existing_demo_card_and_stock(self):
-        self.client.get("/")
+        self.login("20260001", "0001")
         with closing(sqlite3.connect(self.database_path)) as database, database:
             database.execute("DROP TABLE loans")
             database.execute("UPDATE equipment SET available_quantity = 2 WHERE item_id = 1")
@@ -209,7 +319,7 @@ class ActiveLoanTests(PrototypeAPITestCase):
 class ActiveLoanLimitTests(PrototypeAPITestCase):
     def setUp(self):
         super().setUp()
-        self.client.get("/")
+        self.client.get("/staff")
 
     def test_duplicate_loan_rejection_rolls_back_inventory_changes(self):
         with closing(sqlite3.connect(self.database_path)) as database:
@@ -277,9 +387,11 @@ class ActiveLoanLimitTests(PrototypeAPITestCase):
 class BorrowEquipmentTests(PrototypeAPITestCase):
     def setUp(self):
         super().setUp()
-        self.client.get("/")
+        self.login("20260001", "0001")
 
     def borrow(self, item_id, card_id="20260001"):
+        if card_id and card_id.strip() in ("20260001", "20260002"):
+            self.login(card_id)
         return self.client.post("/api/borrow", json={"card_id": card_id, "item_id": item_id})
 
     def test_borrow_creates_a_timestamped_loan_and_decreases_stock(self):
@@ -314,7 +426,7 @@ class BorrowEquipmentTests(PrototypeAPITestCase):
     def test_rejects_missing_or_invalid_card_and_equipment(self):
         original = self.database_state()
         for card_id, item_id, status in (
-            ("", 1, 400), ("20260099", 1, 404), ("20260001", 99, 404),
+            ("", 1, 400), ("20260099", 1, 403), ("20260001", 99, 404),
             ("20260001", True, 400), ("20260001", 2**63, 400), ("20260001", None, 400),
         ):
             with self.subTest(card_id=card_id, item_id=item_id):
@@ -335,9 +447,11 @@ class BorrowEquipmentTests(PrototypeAPITestCase):
 
     def test_concurrent_http_requests_for_one_card_commit_one_loan(self):
         original_stock, original_loans = self.database_state()
-        responses = self.concurrent_posts("/api/borrow", [
-            {"card_id": "20260001", "item_id": item_id} for item_id in (1, 2)
-        ])
+        responses = self.concurrent_posts(
+            "/api/borrow",
+            [{"card_id": "20260001", "item_id": item_id} for item_id in (1, 2)],
+            login_card_id="20260001",
+        )
 
         self.assertEqual(sorted(response.status_code for response in responses), [201, 409])
         loan = next(response.get_json()["loan"] for response in responses if response.status_code == 201)
@@ -374,6 +488,7 @@ class ReturnEquipmentTests(PrototypeAPITestCase):
 
     def test_borrow_return_verify_and_borrow_again(self):
         original_stock, _ = self.database_state()
+        self.login("20260001", "0001")
         card = {"card_id": "20260001", "item_id": 2}
         borrow = self.client.post("/api/borrow", json=card)
         self.assertEqual(borrow.status_code, 201)
@@ -400,6 +515,7 @@ class ReturnEquipmentTests(PrototypeAPITestCase):
         self.assertEqual(self.return_loan(self.demo_loan_id).status_code, 409)
         self.assertEqual(self.database_state(), after_return)
 
+        self.login("20260002", "0002")
         borrow = self.client.post("/api/borrow", json={"card_id": "20260002", "item_id": 2})
         self.assertEqual(borrow.status_code, 201)
         before_retry = self.database_state()
@@ -442,12 +558,13 @@ class StaffViewTests(PrototypeAPITestCase):
         return match.group(1)
 
     def test_staff_view_shows_current_inventory_and_an_existing_loan(self):
-        home = self.client.get("/")
-        self.assertIn(b'href="/staff">Staff view</a>', home.data)
         response = self.client.get("/staff")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.headers["Cache-Control"], "no-store")
         html = response.get_data(as_text=True)
+        self.assertNotIn('href="/"', html)
+        self.assertNotIn('href="/login"', html)
+        self.assertIn('href="/counter"', html)
 
         stock, loans = self.database_state()
         for item_id, quantity in stock:
@@ -462,6 +579,7 @@ class StaffViewTests(PrototypeAPITestCase):
 
     def test_staff_view_reflects_successful_borrow_and_return(self):
         card_id = "20260001"
+        self.login(card_id, "0001")
         borrow = self.client.post("/api/borrow", json={"card_id": card_id, "item_id": 2})
         self.assertEqual(borrow.status_code, 201)
         loan = borrow.get_json()["loan"]

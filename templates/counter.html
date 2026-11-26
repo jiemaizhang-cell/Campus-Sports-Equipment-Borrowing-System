@@ -9,9 +9,11 @@
 <body>
   <header class="app-header">
     <div class="header-inner">
-      <a class="brand-mark" href="{{ url_for('index') }}">Campus Sports Desk</a>
-      <nav class="top-nav" aria-label="System views">
-        <a class="top-nav-item" href="{{ url_for('index') }}">Borrowing</a>
+      <div class="brand-cluster">
+        <a class="brand-mark" href="{{ url_for('staff') }}">Campus Sports Desk</a>
+        <span class="portal-badge">Staff System</span>
+      </div>
+      <nav class="top-nav" aria-label="Staff views">
         <span class="top-nav-item is-current" aria-current="page">Pickup Counter</span>
         <a class="top-nav-item" href="{{ url_for('staff') }}">Staff view</a>
       </nav>
