@@ -9,121 +9,61 @@
 <body>
   <header class="app-header">
     <div class="header-inner">
-      <a class="brand-mark" href="{{ url_for('index') }}">Campus Sports Desk</a>
-      <nav class="top-nav" aria-label="System views">
-        <span class="top-nav-item is-current" aria-current="page">Borrowing</span>
-        <a class="top-nav-item" href="{{ url_for('counter') }}">Pickup Counter</a>
-        <a class="top-nav-item" href="{{ url_for('staff') }}">Staff view</a>
-      </nav>
+      <div class="brand-cluster">
+        <a class="brand-mark" href="{{ url_for('index') }}">Campus Sports Borrowing</a>
+        <span class="portal-badge">Student Portal</span>
+      </div>
+      <div class="top-nav" aria-label="Student account">
+        <span class="top-nav-user">Card <code>{{ card_id }}</code></span>
+        <button id="change-password-btn" type="button" class="top-nav-logout">Change Password</button>
+        <form action="{{ url_for('logout') }}" method="post" class="logout-form">
+          <button id="logout-button" type="submit" class="top-nav-logout">Log out</button>
+        </form>
+      </div>
     </div>
   </header>
 
   <main class="page-main">
     <div class="page-intro">
       <h1>Campus Sports Equipment Borrowing System</h1>
-      <p class="intro">Verify your student card to borrow on-site or reserve equipment for pickup. Returns are processed at the Pickup Counter.</p>
+      <p class="intro">Borrow on-site (5-minute pickup code) or reserve equipment for pickup. Returns are processed in person at the sports desk counter.</p>
     </div>
 
-    <section class="desk-surface" aria-label="Student borrowing desk">
-      <div id="verify-zone" class="verify-zone">
-        <div class="verify-grid">
-          <form id="card-form" class="verify-form-col" action="{{ url_for('verify_card') }}" method="post" novalidate>
-            <label for="card-id">Student Card ID</label>
-            <div class="input-row">
-              <input id="card-id" name="card_id" type="text" inputmode="numeric"
-                     autocomplete="off" placeholder="Enter 8-digit card ID (e.g. 20260001)"
-                     aria-describedby="format-help" maxlength="64" autofocus />
-              <button id="submit-button" type="submit">Verify Card</button>
+    <section class="desk-surface" aria-label="Student borrowing workspace">
+      <div id="feedback" class="feedback" role="status" aria-live="polite" aria-atomic="true" hidden></div>
+
+      <section id="reservation-card" class="reservation-ticket" aria-label="Active reservation" {% if not active_reservation %}hidden{% endif %}>
+        <div class="ticket-main">
+          <div class="ticket-details">
+            <div class="ticket-state-row">
+              <span class="ticket-state">Reserved for pickup</span>
+              <span id="res-countdown" class="countdown-badge" hidden></span>
             </div>
-            <p id="format-help" class="helper demo-row">
-              Demo:
-              <button type="button" class="demo-link" data-card-id="20260001" title="Registered, no active loan">20260001 (Free)</button>
-              <span class="sep">·</span>
-              <button type="button" class="demo-link" data-card-id="20260002" title="Registered, active loan">20260002 (Loan)</button>
-              <span class="sep">·</span>
-              <button type="button" class="demo-link" data-card-id="20260099" title="Unregistered card">20260099 (None)</button>
-              <span class="sep">·</span>
-              <button type="button" class="demo-link" data-card-id="ABC123" title="Invalid format">ABC123 (Bad)</button>
-            </p>
-          </form>
-
-          <dl class="verify-rules-col" aria-label="Borrowing rules">
-            <div class="rule-row">
-              <dt>Limit</dt>
-              <dd>1 active item / card</dd>
-            </div>
-            <div class="rule-row">
-              <dt>Loan window</dt>
-              <dd>2 hours</dd>
-            </div>
-            <div class="rule-row">
-              <dt>Pickup hold</dt>
-              <dd>5 min (borrow) · 5–20 min (reserve)</dd>
-            </div>
-          </dl>
-        </div>
-      </div>
-
-      <div id="verified-strip" class="verified-strip" hidden>
-        <div class="verified-summary">
-          <span class="verified-label">Verified card</span>
-          <code id="verified-card-display" class="verified-id"></code>
-        </div>
-        <div class="verified-actions">
-          <button id="reopen-modal-btn" type="button" class="btn-text">Open actions</button>
-          <button id="switch-card-btn" type="button" class="btn-text" title="Switch to another card">Switch card</button>
-        </div>
-      </div>
-
-      <div id="feedback" class="feedback" role="status" aria-live="polite" aria-atomic="true" hidden>
-        <div id="card-message"></div>
-        <div id="loan-status" class="loan-status" hidden></div>
-      </div>
-    </section>
-
-    <dialog id="action-modal" class="action-modal" aria-labelledby="modal-title">
-      <div class="modal-header">
-        <div>
-          <h2 id="modal-title" class="modal-title">Card <code id="modal-card-id" class="modal-card-code"></code></h2>
-          <p id="modal-subtitle" class="modal-subtitle"></p>
-        </div>
-        <button id="modal-close-btn" type="button" class="modal-close" aria-label="Close dialog">&times;</button>
-      </div>
-
-      <div class="modal-body">
-        <div id="modal-feedback" class="feedback modal-feedback" role="status" aria-live="polite" aria-atomic="true" hidden></div>
-
-        <section id="reservation-card" class="reservation-ticket" aria-label="Active reservation" hidden>
-          <div class="ticket-main">
-            <div class="ticket-details">
-              <div class="ticket-state-row">
-                <span class="ticket-state">Reserved for pickup</span>
-                <span id="res-countdown" class="countdown-badge" hidden></span>
-              </div>
-              <h3 id="res-item-name" class="ticket-item"></h3>
-              <p class="ticket-expiry">Hold expires (UTC): <time id="res-expires-at"></time></p>
-            </div>
-            <div class="ticket-code-panel">
-              <span class="ticket-code-label">Pickup Code</span>
-              <div class="ticket-code-row">
-                <code id="res-pickup-code" class="pickup-code"></code>
-                <button id="copy-code-button" type="button" class="btn-ticket-copy">Copy</button>
-              </div>
+            <h2 id="res-item-name" class="ticket-item">{{ active_reservation.item_name if active_reservation else '' }}</h2>
+            <p class="ticket-expiry">Hold expires (UTC): <time id="res-expires-at"{% if active_reservation %} datetime="{{ active_reservation.expires_at|replace(' ', 'T') }}Z"{% endif %}>{{ active_reservation.expires_at if active_reservation else '' }}</time></p>
+          </div>
+          <div class="ticket-code-panel">
+            <span class="ticket-code-label">Pickup Code</span>
+            <div class="ticket-code-row">
+              <code id="res-pickup-code" class="pickup-code">{{ active_reservation.pickup_code if active_reservation else '' }}</code>
+              <button id="copy-code-button" type="button" class="btn-ticket-copy">Copy</button>
             </div>
           </div>
-          <div class="ticket-actions">
-            <p class="ticket-guidance">Present this pickup code at the sports desk counter before it expires.</p>
-            <button id="res-cancel-button" type="button" class="btn-danger-outline">Cancel Reservation</button>
-          </div>
-        </section>
+        </div>
+        <div class="ticket-actions">
+          <p class="ticket-guidance">Present this pickup code at the sports desk counter before it expires.</p>
+          <button id="res-cancel-button" type="button" class="btn-danger-outline">Cancel Reservation</button>
+        </div>
+      </section>
 
-        <section id="active-loan-notice" class="return-zone" aria-label="Active loan notice" hidden>
-          <h3 class="zone-title">Currently borrowed: <span id="active-loan-item"></span></h3>
-          <p class="helper">Return this item in person at the sports desk counter before borrowing or reserving another item.</p>
-        </section>
+      <section id="active-loan-notice" class="return-zone" aria-label="Active loan notice" {% if not active_loan %}hidden{% endif %}>
+        <h2 class="zone-title">Currently borrowed: <span id="active-loan-item">{{ active_loan.item_name if active_loan else '' }}</span></h2>
+        <p class="helper">Return this item in person at the sports desk counter before borrowing or reserving another item.</p>
+      </section>
 
-        <div id="action-forms" hidden>
-          <form id="borrow-form" action="{{ url_for('create_equipment_reservation') }}" method="post" hidden>
+      <div id="action-forms" class="borrow-workspace-grid" {% if active_loan or active_reservation or not equipment %}hidden{% endif %}>
+        <div class="borrow-actions-col">
+          <form id="borrow-form" action="{{ url_for('create_equipment_reservation') }}" method="post">
             <label for="equipment-item">Select equipment</label>
             <select id="equipment-item" name="item_id" required>
               <option value="">Choose an available item...</option>
@@ -137,7 +77,7 @@
 
           <div class="or-divider" aria-hidden="true"><span>or reserve for pickup</span></div>
 
-          <form id="reserve-form" class="reserve-dock" action="{{ url_for('create_equipment_reservation') }}" method="post" hidden>
+          <form id="reserve-form" class="reserve-dock" action="{{ url_for('create_equipment_reservation') }}" method="post">
             <input id="reserve-duration" name="duration_minutes" type="hidden" value="10" />
             <span class="hold-label">Hold</span>
             <div class="duration-group" role="group" aria-label="Reservation hold duration">
@@ -149,19 +89,33 @@
             <button id="reserve-button" type="submit" class="btn-reserve" disabled>Reserve &amp; Get Code</button>
           </form>
         </div>
-      </div>
 
-      <div class="modal-footer">
-        <button id="modal-switch-btn" type="button" class="btn-modal-secondary">Switch Card</button>
-        <button id="modal-done-btn" type="button" class="btn-modal-close">Done</button>
+        <dl class="verify-rules-col" aria-label="Borrowing rules">
+          <div class="rule-row">
+            <dt>Signed-in card</dt>
+            <dd><code>{{ card_id }}</code></dd>
+          </div>
+          <div class="rule-row">
+            <dt>Limit</dt>
+            <dd>1 active item / card</dd>
+          </div>
+          <div class="rule-row">
+            <dt>Loan window</dt>
+            <dd>2 hours</dd>
+          </div>
+          <div class="rule-row">
+            <dt>Pickup hold</dt>
+            <dd>5 min (borrow) · 5–20 min (reserve)</dd>
+          </div>
+        </dl>
       </div>
-    </dialog>
+    </section>
 
     <section id="inventory-surface" class="inventory-surface" aria-labelledby="equipment-heading">
       <div class="section-head">
         <div>
           <h2 id="equipment-heading">Equipment availability</h2>
-          <p id="inventory-hint" class="inventory-subhint">Verify a card above to borrow or reserve.</p>
+          <p id="inventory-hint" class="inventory-subhint">Click any available row to select it.</p>
         </div>
         <div class="header-tools">
           <button id="available-only-btn" type="button" class="filter-chip" aria-pressed="false">Available only</button>
@@ -175,6 +129,44 @@
     </section>
   </main>
 
+  <dialog id="password-modal" class="action-modal modal-compact" aria-labelledby="password-modal-title">
+    <div class="modal-header">
+      <div>
+        <h2 id="password-modal-title" class="modal-title">Change Password</h2>
+        <p class="modal-subtitle">Update the password for card <code>{{ card_id }}</code>.</p>
+      </div>
+      <button type="button" id="password-modal-close" class="modal-close" aria-label="Close dialog">&times;</button>
+    </div>
+    <form id="password-form" action="{{ url_for('change_password') }}" method="post" novalidate>
+      <div class="modal-body password-modal-body">
+        <div id="password-feedback" class="feedback modal-feedback" role="status" aria-live="polite" aria-atomic="true" hidden></div>
+
+        <div class="login-field">
+          <label for="current-password">Current Password</label>
+          <input id="current-password" name="current_password" type="password"
+                 autocomplete="current-password" placeholder="Enter current password" maxlength="64" required />
+        </div>
+
+        <div class="login-field">
+          <label for="new-password">New Password</label>
+          <input id="new-password" name="new_password" type="password"
+                 autocomplete="new-password" placeholder="6–64 characters" maxlength="64" required />
+        </div>
+
+        <div class="login-field">
+          <label for="confirm-password">Confirm New Password</label>
+          <input id="confirm-password" name="confirm_password" type="password"
+                 autocomplete="new-password" placeholder="Re-enter new password" maxlength="64" required />
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="password-cancel-btn" class="btn-modal-secondary">Cancel</button>
+        <button type="submit" id="password-submit-btn" class="btn-modal-close">Update Password</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script id="borrowing-state" type="application/json">{{ {"card_id": card_id, "active_loan": active_loan, "active_reservation": active_reservation} | tojson }}</script>
   <script src="{{ url_for('static', filename='main.js') }}"></script>
 </body>
 </html>

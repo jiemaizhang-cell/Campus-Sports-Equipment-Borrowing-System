@@ -4,7 +4,7 @@ import os
 import sqlite3
 from pathlib import Path
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, redirect, render_template, request, session, url_for
 
 from database import (
     DEFAULT_RESERVATION_MINUTES,
@@ -13,12 +13,15 @@ from database import (
     CardNotRegistered,
     EquipmentNotFound,
     EquipmentUnavailable,
+    InvalidPassword,
     InvalidReservationDuration,
     NoActiveLoan,
     ReservationNotFound,
     ReservationStateError,
+    authenticate_card,
     borrow_equipment,
     cancel_reservation,
+    change_card_password,
     claim_reservation,
     create_reservation,
     find_active_reservation,
@@ -31,17 +34,69 @@ from validation import validate_card_id
 
 app = Flask(__name__)
 app.config["DATABASE"] = Path(app.instance_path) / "campus.db"
+app.secret_key = os.environ.get("FLASK_SECRET_KEY", "campus-sports-desk-dev-secret")
+app.config.setdefault("SESSION_COOKIE_HTTPONLY", True)
+app.config.setdefault("SESSION_COOKIE_SAMESITE", "Lax")
+
+
+def _logged_in_card_id():
+    card_id = session.get("student_card_id")
+    return card_id if isinstance(card_id, str) and card_id else None
+
+
+@app.get("/login")
+def login_page():
+    headers = {"Cache-Control": "no-store"}
+    card_id = _logged_in_card_id()
+    if card_id:
+        try:
+            card = find_card_loan_status(app.config["DATABASE"], card_id)
+        except (OSError, sqlite3.Error):
+            card = None
+        if card is not None:
+            return redirect(url_for("index"))
+        session.pop("student_card_id", None)
+    return render_template("login.html"), 200, headers
 
 
 @app.get("/")
 def index():
+    headers = {"Cache-Control": "no-store"}
+    card_id = _logged_in_card_id()
+    if not card_id:
+        return redirect(url_for("login_page"))
+
     try:
+        card = find_card_loan_status(app.config["DATABASE"], card_id)
+        if card is None:
+            session.pop("student_card_id", None)
+            return redirect(url_for("login_page"))
+        active_reservation = find_active_reservation(app.config["DATABASE"], card_id)
         equipment = list_equipment(app.config["DATABASE"])
     except (OSError, sqlite3.Error):
-        app.logger.exception("Unable to read equipment availability")
+        app.logger.exception("Unable to read student borrowing state")
+        card = {"card_id": card_id, "item_name": None}
+        active_reservation = None
         equipment = None
 
-    return render_template("index.html", equipment=equipment), 200, {"Cache-Control": "no-store"}
+    active_loan = _active_loan_payload(card) if card and card["item_name"] is not None else None
+    return (
+        render_template(
+            "index.html",
+            card_id=card_id,
+            active_loan=active_loan,
+            active_reservation=active_reservation,
+            equipment=equipment,
+        ),
+        200,
+        headers,
+    )
+
+
+@app.post("/logout")
+def logout():
+    session.pop("student_card_id", None)
+    return redirect(url_for("login_page"))
 
 
 @app.get("/staff")
@@ -182,6 +237,102 @@ def _active_loan_payload(loan):
     }
 
 
+def _require_student_session(payload=None):
+    """Ensure a student is logged in and cannot act on another student's card."""
+    session_card = _logged_in_card_id()
+    if session_card is None:
+        return None, (jsonify(message="Please sign in with your student card first."), 401)
+    if isinstance(payload, dict) and payload.get("card_id") is not None:
+        valid, normalized, message = _read_card_input(payload)
+        if not valid:
+            return None, (jsonify(message=message), 400)
+        if normalized != session_card:
+            return None, (jsonify(message="You can only perform actions for your signed-in card."), 403)
+    return session_card, None
+
+
+@app.post("/api/login")
+def login_submit():
+    payload = _read_json_object()
+    valid, normalized, message = _read_card_input(payload)
+    if not valid:
+        return jsonify(valid=False, message=message), 400
+
+    password = payload.get("password") if isinstance(payload, dict) else None
+    if not isinstance(password, str) or not password:
+        return jsonify(valid=False, message="Password is required."), 400
+
+    try:
+        card = authenticate_card(app.config["DATABASE"], normalized, password)
+    except (OSError, sqlite3.Error):
+        app.logger.exception("Unable to authenticate student card")
+        return jsonify(valid=False, message="Sign-in is temporarily unavailable."), 503
+
+    if not card:
+        return jsonify(valid=False, message="Invalid student card ID or password."), 401
+
+    session["student_card_id"] = card["card_id"]
+    active_loan = _active_loan_payload(card) if card["item_name"] is not None else None
+    active_reservation = None
+    if active_loan is None:
+        try:
+            active_reservation = find_active_reservation(app.config["DATABASE"], card["card_id"])
+        except (OSError, sqlite3.Error):
+            active_reservation = None
+
+    return jsonify(
+        valid=True,
+        card_id=card["card_id"],
+        message="Signed in.",
+        active_loan=active_loan,
+        active_reservation=active_reservation,
+    ), 200
+
+
+@app.post("/api/change-password")
+def change_password():
+    payload = _read_json_object()
+    if not isinstance(payload, dict):
+        return jsonify(message="Send a JSON object to change password."), 400
+
+    card_id, auth_error = _require_student_session(payload)
+    if auth_error is not None:
+        return auth_error
+
+    current_password = payload.get("current_password")
+    new_password = payload.get("new_password")
+    confirm_password = payload.get("confirm_password")
+
+    if not isinstance(current_password, str) or not current_password:
+        return jsonify(message="Current password is required."), 400
+    if not isinstance(new_password, str) or len(new_password) < 6 or len(new_password) > 64:
+        return jsonify(message="New password must be 6–64 characters."), 400
+    if not new_password.strip():
+        return jsonify(message="New password cannot be blank spaces."), 400
+    if not isinstance(confirm_password, str) or confirm_password != new_password:
+        return jsonify(message="New passwords do not match."), 400
+    if new_password == current_password:
+        return jsonify(message="New password must be different from your current password."), 400
+
+    try:
+        change_card_password(app.config["DATABASE"], card_id, current_password, new_password)
+    except InvalidPassword as error:
+        return jsonify(message=str(error)), 401
+    except CardNotRegistered as error:
+        return jsonify(message=str(error)), 404
+    except (OSError, sqlite3.Error):
+        app.logger.exception("Unable to update student password")
+        return jsonify(message="Password update is temporarily unavailable."), 503
+
+    return jsonify(message="Password updated successfully."), 200
+
+
+@app.post("/api/logout")
+def api_logout():
+    session.pop("student_card_id", None)
+    return jsonify(ok=True), 200
+
+
 @app.post("/api/validate-card")
 def validate_card():
     valid, normalized, message = _read_card_input()
@@ -218,9 +369,11 @@ def verify_card():
 @app.post("/api/borrow")
 def borrow():
     payload = _read_json_object()
-    valid, card_id, message = _read_card_input(payload)
-    if not valid:
-        return jsonify(message=message), 400
+    if not isinstance(payload, dict):
+        return jsonify(message="Send a JSON object to borrow equipment."), 400
+    card_id, auth_error = _require_student_session(payload)
+    if auth_error is not None:
+        return auth_error
 
     item_id = _read_record_id("item_id", payload)
     if item_id is None:
@@ -266,9 +419,9 @@ def return_loan():
 @app.post("/api/reservations/status")
 def reservation_status():
     payload = _read_json_object()
-    valid, card_id, message = _read_card_input(payload)
-    if not valid:
-        return jsonify(valid=False, message=message), 400
+    card_id, auth_error = _require_student_session(payload)
+    if auth_error is not None:
+        return auth_error
 
     try:
         card = find_card_loan_status(app.config["DATABASE"], card_id)
@@ -289,9 +442,11 @@ def reservation_status():
 @app.post("/api/reservations")
 def create_equipment_reservation():
     payload = _read_json_object()
-    valid, card_id, message = _read_card_input(payload)
-    if not valid:
-        return jsonify(message=message), 400
+    if not isinstance(payload, dict):
+        return jsonify(message="Send a JSON object to create a reservation."), 400
+    card_id, auth_error = _require_student_session(payload)
+    if auth_error is not None:
+        return auth_error
 
     item_id = _read_record_id("item_id", payload)
     if item_id is None:
@@ -361,9 +516,9 @@ def cancel_equipment_reservation():
     if pickup_code is None:
         if payload.get("pickup_code") is not None:
             return jsonify(message="Enter a valid pickup code."), 400
-        valid, card_id, message = _read_card_input(payload)
-        if not valid:
-            return jsonify(message=message), 400
+        card_id, auth_error = _require_student_session(payload)
+        if auth_error is not None:
+            return auth_error
         reservation_id = _read_record_id("reservation_id", payload)
         if reservation_id is None:
             return jsonify(message="Select a valid reservation to cancel."), 400

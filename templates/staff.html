@@ -9,19 +9,24 @@
 <body>
   <header class="app-header">
     <div class="header-inner">
-      <a class="brand-mark" href="{{ url_for('index') }}">Campus Sports Desk</a>
-      <nav class="top-nav" aria-label="System views">
-        <a class="top-nav-item" href="{{ url_for('index') }}">Back to borrowing</a>
+      <div class="brand-cluster">
+        <a class="brand-mark" href="{{ url_for('staff') }}">Campus Sports Desk</a>
+        <span class="portal-badge">Staff System</span>
+      </div>
+      <nav class="top-nav" aria-label="Staff views">
         <a class="top-nav-item" href="{{ url_for('counter') }}">Pickup Counter</a>
-        <a class="top-nav-item is-current" href="{{ url_for('staff') }}">Refresh staff view</a>
+        <span class="top-nav-item is-current" aria-current="page">Staff view</span>
       </nav>
     </div>
   </header>
 
   <main class="page-main">
-    <div class="page-intro">
-      <h1>Staff inventory and loan history</h1>
-      <p class="intro">Monitor live equipment stock, audit reservation history, and track active or overdue loans.</p>
+    <div class="page-intro page-intro-split">
+      <div>
+        <h1>Staff inventory and loan history</h1>
+        <p class="intro">Monitor live equipment stock, audit reservation history, and track active or overdue loans.</p>
+      </div>
+      <a class="btn-refresh" href="{{ url_for('staff') }}">Refresh staff view</a>
     </div>
 
     {% if loans is none %}
@@ -161,7 +166,8 @@
               <td class="action-cell">
                 <button type="button" class="btn-table-primary staff-row-return"
                         data-card-id="{{ loan.card_id }}"
-                        data-loan-id="{{ loan.loan_id }}">Return</button>
+                        data-loan-id="{{ loan.loan_id }}"
+                        data-item-name="{{ loan.item_name }}">Return</button>
               </td>
               {% else %}
               <td><time datetime="{{ loan.returned_at|replace(' ', 'T') }}Z">{{ loan.returned_at }}</time></td>
@@ -189,6 +195,22 @@
       <div id="staff-modal-body" class="modal-body"></div>
       <div class="modal-footer">
         <button id="staff-modal-done" type="button" class="btn-modal-close">Close</button>
+      </div>
+    </dialog>
+
+    <dialog id="staff-confirm-modal" class="action-modal modal-compact" aria-labelledby="staff-confirm-title">
+      <div class="modal-header">
+        <div>
+          <h2 id="staff-confirm-title" class="modal-title">Confirm Action</h2>
+        </div>
+        <button type="button" id="staff-confirm-x" class="modal-close" aria-label="Close dialog">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p id="staff-confirm-message" class="confirm-modal-message"></p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="staff-confirm-cancel" class="btn-modal-secondary">Cancel</button>
+        <button type="button" id="staff-confirm-ok" class="btn-modal-close">Confirm</button>
       </div>
     </dialog>
     {% endif %}

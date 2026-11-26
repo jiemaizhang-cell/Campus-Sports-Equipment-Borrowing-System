@@ -1,24 +1,14 @@
-const form = document.getElementById('card-form');
-const input = document.getElementById('card-id');
-const verifyZone = document.getElementById('verify-zone');
-const verifiedStrip = document.getElementById('verified-strip');
-const verifiedCardDisplay = document.getElementById('verified-card-display');
-const reopenModalBtn = document.getElementById('reopen-modal-btn');
-const switchCardBtn = document.getElementById('switch-card-btn');
-
-const actionModal = document.getElementById('action-modal');
-const modalCardId = document.getElementById('modal-card-id');
-const modalSubtitle = document.getElementById('modal-subtitle');
-const modalCloseBtn = document.getElementById('modal-close-btn');
-const modalDoneBtn = document.getElementById('modal-done-btn');
-const modalSwitchBtn = document.getElementById('modal-switch-btn');
-const modalFeedback = document.getElementById('modal-feedback');
+const stateEl = document.getElementById('borrowing-state');
+let initialState = {card_id: null, active_loan: null, active_reservation: null};
+if (stateEl) {
+  try {
+    initialState = JSON.parse(stateEl.textContent || '{}');
+  } catch (err) {
+    // Keep defaults
+  }
+}
 
 const feedback = document.getElementById('feedback');
-const cardMessage = document.getElementById('card-message');
-const loanStatus = document.getElementById('loan-status');
-const verifyButton = document.getElementById('submit-button');
-
 const inventorySurface = document.getElementById('inventory-surface');
 const inventoryHint = document.getElementById('inventory-hint');
 const equipmentSearch = document.getElementById('equipment-search');
@@ -47,10 +37,9 @@ const resCountdown = document.getElementById('res-countdown');
 const copyCodeButton = document.getElementById('copy-code-button');
 const resCancelButton = document.getElementById('res-cancel-button');
 
-const demoLinks = document.querySelectorAll('.demo-link');
-let verifiedCardId = null;
-let currentLoan = null;
-let currentReservation = null;
+const signedInCardId = initialState.card_id || null;
+let currentLoan = initialState.active_loan || null;
+let currentReservation = initialState.active_reservation || null;
 let countdownTimer = null;
 let cancelConfirmTimer = null;
 let copyResetTimer = null;
@@ -67,6 +56,7 @@ function resetCancelConfirm() {
     clearTimeout(cancelConfirmTimer);
     cancelConfirmTimer = null;
   }
+  if (!resCancelButton) return;
   resCancelButton.dataset.armed = 'false';
   resCancelButton.classList.remove('btn-armed');
   resCancelButton.textContent = 'Cancel Reservation';
@@ -103,7 +93,7 @@ function startCountdown(expiresAtUtc) {
     if (state.expired) {
       stopCountdown();
       await refreshEquipmentTable();
-      setVerifiedCard(verifiedCardId, null, null);
+      applyWorkspaceState(null, null);
       showFeedback('Your reservation hold expired and the item was returned to stock. You may reserve or borrow again.', false);
     }
   };
@@ -111,18 +101,25 @@ function startCountdown(expiresAtUtc) {
   countdownTimer = setInterval(update, 1000);
 }
 
-function updateInventoryState(verified, readyForAction) {
+function showFeedback(message, success) {
+  if (!feedback) return;
+  feedback.className = `feedback ${success ? 'success' : 'error'}`;
+  feedback.textContent = message;
+  feedback.hidden = false;
+}
+
+function updateInventoryState(readyForAction) {
+  if (!inventorySurface || !inventoryHint) return;
   inventorySurface.classList.toggle('is-ready', Boolean(readyForAction));
-  if (!verified) {
-    inventoryHint.textContent = 'Verify a card to borrow or reserve.';
-  } else if (readyForAction) {
+  if (readyForAction) {
     inventoryHint.textContent = 'Click any available row to select it.';
   } else {
-    inventoryHint.textContent = 'Return your active item at the Pickup Counter or cancel your reservation first.';
+    inventoryHint.textContent = 'Return your active item at the sports desk counter or cancel your reservation first.';
   }
 }
 
 function updateSelectionSummary() {
+  if (!itemSelect || !selectionSummary) return;
   const opt = itemSelect.options[itemSelect.selectedIndex];
   if (!itemSelect.value || !opt) {
     selectionSummary.hidden = true;
@@ -153,82 +150,28 @@ function renderReservationCard(reservation) {
   startCountdown(reservation.expires_at);
 }
 
-function openActionModal() {
-  if (actionModal && !actionModal.open) {
-    actionModal.showModal();
-  }
-}
-
-function closeActionModal() {
-  if (actionModal && actionModal.open) {
-    actionModal.close();
-  }
-}
-
-function showModalFeedback(message, success) {
-  if (!modalFeedback) return;
-  modalFeedback.className = `feedback modal-feedback ${success ? 'success' : 'error'}`;
-  modalFeedback.textContent = message;
-  modalFeedback.hidden = false;
-}
-
-function clearModalFeedback() {
-  if (!modalFeedback) return;
-  modalFeedback.hidden = true;
-  modalFeedback.textContent = '';
-}
-
-function setVerifiedCard(cardId, activeLoan = null, activeReservation = null) {
-  verifiedCardId = cardId;
+function applyWorkspaceState(activeLoan = null, activeReservation = null) {
   currentLoan = activeLoan;
   renderReservationCard(activeReservation);
-
-  const isVerified = Boolean(cardId);
-  verifyZone.hidden = isVerified;
-  verifiedStrip.hidden = !isVerified;
-  if (isVerified) {
-    verifiedCardDisplay.textContent = cardId;
-    if (modalCardId) modalCardId.textContent = cardId;
-    if (modalSubtitle) {
-      if (activeLoan) {
-        modalSubtitle.textContent = 'This card currently has an item checked out.';
-      } else if (activeReservation) {
-        modalSubtitle.textContent = 'Show this pickup code at the Pickup Counter.';
-      } else {
-        modalSubtitle.textContent = 'Choose equipment to borrow now or reserve for pickup.';
-      }
-    }
-    input.removeAttribute('aria-invalid');
-  } else {
-    closeActionModal();
-    clearModalFeedback();
-  }
 
   activeLoanNotice.hidden = !activeLoan;
   if (activeLoan) {
     activeLoanItem.textContent = activeLoan.item_name;
   }
 
-  const canBorrowOrReserve = isVerified && !activeLoan && !activeReservation && itemSelect.options.length > 1;
+  const canBorrowOrReserve = Boolean(signedInCardId) && !activeLoan && !activeReservation && itemSelect && itemSelect.options.length > 1;
   actionForms.hidden = !canBorrowOrReserve;
-  borrowForm.hidden = !canBorrowOrReserve;
-  reserveForm.hidden = !canBorrowOrReserve;
 
-  itemSelect.value = '';
-  borrowButton.disabled = true;
-  reserveButton.disabled = true;
+  if (itemSelect) itemSelect.value = '';
+  if (borrowButton) borrowButton.disabled = true;
+  if (reserveButton) reserveButton.disabled = true;
   updateSelectionSummary();
   syncTableSelection('');
-  updateInventoryState(isVerified, canBorrowOrReserve);
-}
-
-function clearVerification() {
-  setVerifiedCard(null);
-  feedback.hidden = true;
+  updateInventoryState(canBorrowOrReserve);
 }
 
 function setSubmitting(submitting, activeButton = null) {
-  const buttons = [verifyButton, borrowButton, reserveButton, resCancelButton];
+  const buttons = [borrowButton, reserveButton, resCancelButton];
   buttons.forEach((btn) => {
     if (btn) btn.removeAttribute('aria-busy');
   });
@@ -236,36 +179,22 @@ function setSubmitting(submitting, activeButton = null) {
     activeButton.setAttribute('aria-busy', 'true');
   }
 
-  verifyButton.disabled = submitting;
-  input.readOnly = submitting;
-  itemSelect.disabled = submitting;
-  borrowButton.disabled = submitting || !itemSelect.value;
-  reserveButton.disabled = submitting || !itemSelect.value;
-  resCancelButton.disabled = submitting;
+  if (itemSelect) itemSelect.disabled = submitting;
+  if (borrowButton) borrowButton.disabled = submitting || !itemSelect?.value;
+  if (reserveButton) reserveButton.disabled = submitting || !itemSelect?.value;
+  if (resCancelButton) resCancelButton.disabled = submitting;
 }
 
-function showFeedback(message, success, activeLoan = null, activeReservation = null) {
-  feedback.className = `feedback ${success ? 'success' : 'error'}`;
-  cardMessage.textContent = message;
-  loanStatus.hidden = !success;
-  if (success) {
-    if (activeLoan) {
-      loanStatus.textContent = `Active loan: ${activeLoan.item_name} (return at Pickup Counter).`;
-    } else if (activeReservation) {
-      loanStatus.textContent = `Show pickup code ${activeReservation.pickup_code} at the Pickup Counter before the hold expires.`;
-    } else {
-      loanStatus.textContent = 'Eligible to borrow or reserve 1 item.';
-    }
-  }
-  feedback.hidden = false;
-}
-
-async function postForm(url, method, payload) {
+async function postJson(url, payload) {
   const response = await fetch(url, {
-    method: method || 'POST',
+    method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(payload)
   });
+  if (response.status === 401) {
+    window.location.href = '/login';
+    return {response, data: {message: 'Session expired. Redirecting to sign in.'}};
+  }
   let data = {};
   try {
     data = await response.json();
@@ -302,6 +231,7 @@ async function refreshEquipmentTable() {
     (data.equipment || []).forEach((item) => {
       updateStock(item.item_id, item.available_quantity, false);
     });
+    applyEquipmentFiltersAndPage();
   } catch (err) {
     // Keep current values if refresh fails
   }
@@ -327,98 +257,10 @@ function initSelectableRows() {
       reserveButton.disabled = !itemSelect.value;
       updateSelectionSummary();
       syncTableSelection(itemId);
-      clearModalFeedback();
-      openActionModal();
+      actionForms.scrollIntoView({behavior: 'smooth', block: 'nearest'});
     });
   });
 }
-
-async function verifyCardSubmit() {
-  clearVerification();
-  clearModalFeedback();
-  setSubmitting(true, verifyButton);
-  try {
-    const {response, data} = await postForm(form.action, form.method, {card_id: input.value});
-    const verified = response.ok && data.valid;
-    if (!verified) {
-      input.setAttribute('aria-invalid', 'true');
-      showFeedback(data.message || 'Unable to validate the card ID.', false);
-      return;
-    }
-
-    let activeReservation = null;
-    if (!data.active_loan) {
-      const resCheck = await postForm('/api/reservations/status', 'POST', {card_id: data.card_id});
-      if (resCheck.response.ok) {
-        activeReservation = resCheck.data.active_reservation || null;
-      }
-      await refreshEquipmentTable();
-    }
-
-    setVerifiedCard(data.card_id, data.active_loan, activeReservation);
-    showFeedback(data.message, true, data.active_loan, activeReservation);
-    openActionModal();
-  } catch (error) {
-    showFeedback('Connection error. Please check that the Flask server is running.', false);
-  } finally {
-    setSubmitting(false);
-  }
-}
-
-if (reopenModalBtn) {
-  reopenModalBtn.addEventListener('click', () => {
-    clearModalFeedback();
-    openActionModal();
-  });
-}
-
-if (modalCloseBtn) modalCloseBtn.addEventListener('click', closeActionModal);
-if (modalDoneBtn) modalDoneBtn.addEventListener('click', closeActionModal);
-
-if (modalSwitchBtn) {
-  modalSwitchBtn.addEventListener('click', () => {
-    clearVerification();
-    input.focus();
-    input.select();
-  });
-}
-
-if (actionModal) {
-  actionModal.addEventListener('click', (event) => {
-    if (event.target === actionModal) {
-      closeActionModal();
-    }
-  });
-  actionModal.addEventListener('close', () => {
-    if (verifiedCardId !== null) {
-      setVerifiedCard(null);
-      feedback.hidden = true;
-      input.focus();
-    }
-  });
-}
-
-switchCardBtn.addEventListener('click', () => {
-  clearVerification();
-  input.focus();
-  input.select();
-});
-
-document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape' && verifiedCardId) {
-    clearVerification();
-    input.focus();
-    input.select();
-  }
-});
-
-demoLinks.forEach((link) => {
-  link.addEventListener('click', () => {
-    input.value = link.dataset.cardId || '';
-    input.removeAttribute('aria-invalid');
-    verifyCardSubmit();
-  });
-});
 
 durationButtons.forEach((btn) => {
   btn.addEventListener('click', () => {
@@ -428,121 +270,114 @@ durationButtons.forEach((btn) => {
   });
 });
 
-input.addEventListener('input', () => {
-  input.removeAttribute('aria-invalid');
-  clearVerification();
-});
-
-itemSelect.addEventListener('change', () => {
-  const hasSelection = Boolean(itemSelect.value);
-  borrowButton.disabled = !hasSelection;
-  reserveButton.disabled = !hasSelection;
-  updateSelectionSummary();
-  syncTableSelection(itemSelect.value);
-});
-
-form.addEventListener('submit', (event) => {
-  event.preventDefault();
-  verifyCardSubmit();
-});
+if (itemSelect) {
+  itemSelect.addEventListener('change', () => {
+    const hasSelection = Boolean(itemSelect.value);
+    borrowButton.disabled = !hasSelection;
+    reserveButton.disabled = !hasSelection;
+    updateSelectionSummary();
+    syncTableSelection(itemSelect.value);
+  });
+}
 
 async function submitPickupCodeRequest(itemId, durationMinutes, triggerButton, fallbackError) {
   setSubmitting(true, triggerButton);
   try {
-    const {response, data} = await postForm(reserveForm.action, reserveForm.method, {
-      card_id: verifiedCardId,
+    const {response, data} = await postJson(reserveForm.action, {
       item_id: itemId,
       duration_minutes: durationMinutes
     });
     if (!response.ok) {
-      showModalFeedback(data.message || fallbackError, false);
+      showFeedback(data.message || fallbackError, false);
       if (response.status === 409) await refreshEquipmentTable();
       return;
     }
 
     const reservation = data.reservation;
     updateStock(itemId, reservation.available_quantity);
-    setVerifiedCard(verifiedCardId, null, reservation);
-    showFeedback(data.message, true, null, reservation);
-    showModalFeedback(data.message, true);
+    applyWorkspaceState(null, reservation);
+    showFeedback(data.message, true);
   } catch (error) {
-    clearVerification();
-    showFeedback('Could not confirm the pickup code. Verify the card again to check its status.', false);
+    showFeedback('Could not confirm the pickup code. Please refresh and try again.', false);
   } finally {
     setSubmitting(false);
   }
 }
 
-borrowForm.addEventListener('submit', async (event) => {
-  event.preventDefault();
-  if (!verifiedCardId || currentLoan || currentReservation || !itemSelect.value) {
-    return;
-  }
-
-  await submitPickupCodeRequest(itemSelect.value, 5, borrowButton, 'Unable to borrow this item.');
-});
-
-reserveForm.addEventListener('submit', async (event) => {
-  event.preventDefault();
-  if (!verifiedCardId || currentLoan || currentReservation || !itemSelect.value) {
-    return;
-  }
-
-  const durationMinutes = Number(reserveDuration.value || '10');
-  await submitPickupCodeRequest(itemSelect.value, durationMinutes, reserveButton, 'Unable to reserve this item.');
-});
-
-copyCodeButton.addEventListener('click', async () => {
-  const code = resPickupCode.textContent;
-  if (!code) return;
-  if (copyResetTimer) clearTimeout(copyResetTimer);
-  try {
-    await navigator.clipboard.writeText(code);
-    copyCodeButton.textContent = 'Copied!';
-    copyResetTimer = setTimeout(() => {
-      copyCodeButton.textContent = 'Copy';
-    }, 2000);
-  } catch (err) {
-    copyCodeButton.textContent = code;
-  }
-});
-
-resCancelButton.addEventListener('click', async () => {
-  if (!verifiedCardId || !currentReservation) return;
-  if (resCancelButton.dataset.armed !== 'true') {
-    resCancelButton.dataset.armed = 'true';
-    resCancelButton.classList.add('btn-armed');
-    resCancelButton.textContent = 'Confirm Cancel?';
-    cancelConfirmTimer = setTimeout(resetCancelConfirm, 3500);
-    return;
-  }
-
-  resetCancelConfirm();
-  const {reservation_id: reservationId, item_id: itemId} = currentReservation;
-  setSubmitting(true, resCancelButton);
-  try {
-    const {response, data} = await postForm('/api/reservations/cancel', 'POST', {
-      card_id: verifiedCardId,
-      reservation_id: reservationId
-    });
-    if (!response.ok) {
-      showModalFeedback(data.message || 'Unable to cancel this reservation.', false);
-      if (response.status === 409) {
-        setVerifiedCard(verifiedCardId, null, null);
-        await refreshEquipmentTable();
-      }
+if (borrowForm) {
+  borrowForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (!signedInCardId || currentLoan || currentReservation || !itemSelect.value) {
       return;
     }
-    updateStock(itemId, data.reservation.available_quantity);
-    setVerifiedCard(verifiedCardId, null, null);
-    showFeedback(data.message, true, null, null);
-    showModalFeedback(data.message, true);
-  } catch (err) {
-    showModalFeedback('Connection error while cancelling reservation.', false);
-  } finally {
-    setSubmitting(false);
-  }
-});
+    await submitPickupCodeRequest(itemSelect.value, 5, borrowButton, 'Unable to borrow this item.');
+  });
+}
+
+if (reserveForm) {
+  reserveForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (!signedInCardId || currentLoan || currentReservation || !itemSelect.value) {
+      return;
+    }
+    const durationMinutes = Number(reserveDuration.value || '10');
+    await submitPickupCodeRequest(itemSelect.value, durationMinutes, reserveButton, 'Unable to reserve this item.');
+  });
+}
+
+if (copyCodeButton) {
+  copyCodeButton.addEventListener('click', async () => {
+    const code = resPickupCode.textContent;
+    if (!code) return;
+    if (copyResetTimer) clearTimeout(copyResetTimer);
+    try {
+      await navigator.clipboard.writeText(code);
+      copyCodeButton.textContent = 'Copied!';
+      copyResetTimer = setTimeout(() => {
+        copyCodeButton.textContent = 'Copy';
+      }, 2000);
+    } catch (err) {
+      copyCodeButton.textContent = code;
+    }
+  });
+}
+
+if (resCancelButton) {
+  resCancelButton.addEventListener('click', async () => {
+    if (!signedInCardId || !currentReservation) return;
+    if (resCancelButton.dataset.armed !== 'true') {
+      resCancelButton.dataset.armed = 'true';
+      resCancelButton.classList.add('btn-armed');
+      resCancelButton.textContent = 'Confirm Cancel?';
+      cancelConfirmTimer = setTimeout(resetCancelConfirm, 3500);
+      return;
+    }
+
+    resetCancelConfirm();
+    const {reservation_id: reservationId, item_id: itemId} = currentReservation;
+    setSubmitting(true, resCancelButton);
+    try {
+      const {response, data} = await postJson('/api/reservations/cancel', {
+        reservation_id: reservationId
+      });
+      if (!response.ok) {
+        showFeedback(data.message || 'Unable to cancel this reservation.', false);
+        if (response.status === 409) {
+          applyWorkspaceState(null, null);
+          await refreshEquipmentTable();
+        }
+        return;
+      }
+      updateStock(itemId, data.reservation.available_quantity);
+      applyWorkspaceState(null, null);
+      showFeedback(data.message, true);
+    } catch (err) {
+      showFeedback('Connection error while cancelling reservation.', false);
+    } finally {
+      setSubmitting(false);
+    }
+  });
+}
 
 let showAvailableOnly = false;
 let currentEquipPage = 1;
@@ -569,7 +404,7 @@ function applyEquipmentFiltersAndPage() {
   });
 
   if (!equipmentPagination) return;
-  if (matched.length === 0) {
+  if (matched.length <= EQUIP_PAGE_SIZE) {
     equipmentPagination.hidden = true;
     equipmentPagination.innerHTML = '';
     return;
@@ -619,3 +454,117 @@ if (availableOnlyBtn) {
 
 initSelectableRows();
 applyEquipmentFiltersAndPage();
+applyWorkspaceState(currentLoan, currentReservation);
+
+const changePasswordBtn = document.getElementById('change-password-btn');
+const passwordModal = document.getElementById('password-modal');
+const passwordForm = document.getElementById('password-form');
+const passwordFeedback = document.getElementById('password-feedback');
+const currentPasswordInput = document.getElementById('current-password');
+const newPasswordInput = document.getElementById('new-password');
+const confirmPasswordInput = document.getElementById('confirm-password');
+const passwordSubmitBtn = document.getElementById('password-submit-btn');
+const passwordCancelBtn = document.getElementById('password-cancel-btn');
+const passwordCloseBtn = document.getElementById('password-modal-close');
+
+function showPasswordError(message) {
+  if (!passwordFeedback) return;
+  passwordFeedback.className = 'feedback modal-feedback error';
+  passwordFeedback.textContent = message;
+  passwordFeedback.hidden = false;
+}
+
+function clearPasswordFeedback() {
+  if (!passwordFeedback) return;
+  passwordFeedback.hidden = true;
+  passwordFeedback.textContent = '';
+}
+
+function closePasswordModal() {
+  if (passwordForm) passwordForm.reset();
+  [currentPasswordInput, newPasswordInput, confirmPasswordInput].forEach((el) => {
+    el?.removeAttribute('aria-invalid');
+  });
+  clearPasswordFeedback();
+  if (passwordModal?.open) passwordModal.close();
+}
+
+if (changePasswordBtn && passwordModal) {
+  changePasswordBtn.addEventListener('click', () => {
+    clearPasswordFeedback();
+    passwordModal.showModal();
+    currentPasswordInput?.focus();
+  });
+  passwordCloseBtn?.addEventListener('click', closePasswordModal);
+  passwordCancelBtn?.addEventListener('click', closePasswordModal);
+  passwordModal.addEventListener('click', (event) => {
+    if (event.target === passwordModal) closePasswordModal();
+  });
+  passwordModal.addEventListener('close', () => {
+    if (passwordForm) passwordForm.reset();
+    clearPasswordFeedback();
+  });
+}
+
+[currentPasswordInput, newPasswordInput, confirmPasswordInput].forEach((el) => {
+  el?.addEventListener('input', () => {
+    el.removeAttribute('aria-invalid');
+    clearPasswordFeedback();
+  });
+});
+
+if (passwordForm) {
+  passwordForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    clearPasswordFeedback();
+
+    const currentPassword = currentPasswordInput.value;
+    const newPassword = newPasswordInput.value;
+    const confirmPassword = confirmPasswordInput.value;
+
+    if (!currentPassword) {
+      currentPasswordInput.setAttribute('aria-invalid', 'true');
+      showPasswordError('Current password is required.');
+      return;
+    }
+    if (newPassword.length < 6 || newPassword.length > 64 || !newPassword.trim()) {
+      newPasswordInput.setAttribute('aria-invalid', 'true');
+      showPasswordError('New password must be 6–64 characters and cannot be blank spaces.');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      confirmPasswordInput.setAttribute('aria-invalid', 'true');
+      showPasswordError('New passwords do not match.');
+      return;
+    }
+    if (newPassword === currentPassword) {
+      newPasswordInput.setAttribute('aria-invalid', 'true');
+      showPasswordError('New password must be different from your current password.');
+      return;
+    }
+
+    passwordSubmitBtn.disabled = true;
+    passwordSubmitBtn.setAttribute('aria-busy', 'true');
+    try {
+      const {response, data} = await postJson(passwordForm.action, {
+        current_password: currentPassword,
+        new_password: newPassword,
+        confirm_password: confirmPassword
+      });
+      if (!response.ok) {
+        if (response.status === 401) {
+          currentPasswordInput.setAttribute('aria-invalid', 'true');
+        }
+        showPasswordError(data.message || 'Unable to update password.');
+        return;
+      }
+      closePasswordModal();
+      showFeedback(data.message || 'Password updated successfully.', true);
+    } catch (err) {
+      showPasswordError('Connection error while updating password.');
+    } finally {
+      passwordSubmitBtn.disabled = false;
+      passwordSubmitBtn.removeAttribute('aria-busy');
+    }
+  });
+}
