@@ -40,12 +40,14 @@ class ReservationAPITestCase(unittest.TestCase):
             ).fetchall()
         return stock, loans, reservations
 
-    def concurrent_posts(self, path, payloads, login_card_id="20260001"):
+    def concurrent_posts(self, path, payloads, login_card_id="20260001", login_per_payload=False):
         start = Barrier(len(payloads))
 
         def attempt(payload):
             client = app.test_client()
-            if login_card_id:
+            if login_per_payload and isinstance(payload, dict) and payload.get("card_id"):
+                self.login(payload["card_id"], client=client)
+            elif login_card_id:
                 self.login(login_card_id, client=client)
             start.wait(timeout=5)
             return client.post(path, json=payload)
@@ -281,7 +283,9 @@ class ReservationAPITestCase(unittest.TestCase):
 
         cards = ("20260001", "20260003")
         responses = self.concurrent_posts(
-            "/api/reservations", [{"card_id": card_id, "item_id": 2} for card_id in cards]
+            "/api/reservations",
+            [{"card_id": card_id, "item_id": 2} for card_id in cards],
+            login_per_payload=True,
         )
 
         self.assertEqual(sorted(response.status_code for response in responses), [201, 409])
